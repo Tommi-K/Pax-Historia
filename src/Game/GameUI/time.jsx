@@ -2129,7 +2129,7 @@ const DateWidget = ({
             // parsing bug when the real cause was the provider config.
             record.rawResponse === NO_RESPONSE_BODY_NOTE
                 ? "-- Model response --"
-                : "-- Raw model response that failed to parse --",
+                : "-- Raw model response that was rejected (failed to parse or to validate) --",
             // Every fallback now fills this in — with the raw text when there was
             // one, or with a note saying no response body arrived (gameplay.js).
             // So an empty field can only be a turn recorded before that, and this
