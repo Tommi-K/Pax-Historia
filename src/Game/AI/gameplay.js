@@ -113,7 +113,9 @@ import {
   bindWarUpdatesToEvents,
   buildCanonicalWarContext,
   decodeWarUpdates,
+  normalizeWorldWarEventLinks,
   reconcileCombatWarState,
+  repairWarLedgerPayload,
   validateCanonicalWarEvents,
   validateWarLedgerPayload,
 } from "./nativeWarLedger.js";
@@ -417,71 +419,6 @@ const relationStatusForScore = (value) => {
   return "rival";
 };
 
-const WORLD_WAR_TRANSITION_HINTS = Object.freeze({
-  start: /\b(declar(?:e|es|ed|ation)|war begins|hostilities begin|invad(?:e|es|ed|ing|sion)|opens? hostilities)\b/i,
-  "join-a": /\b(joins?|enters?|interven(?:e|es|ed|tion)|declares? war)\b/i,
-  "join-b": /\b(joins?|enters?|interven(?:e|es|ed|tion)|declares? war)\b/i,
-  leave: /\b(leaves?|withdraws?|withdrawal|exits?|separate peace)\b/i,
-  ceasefire: /\b(cease[- ]?fire|armistice|truce|suspends? hostilities)\b/i,
-  resume: /\b(resumes? hostilities|cease[- ]?fire collapses?|armistice collapses?|fighting resumes?)\b/i,
-  end: /\b(peace|surrenders?|capitulat(?:e|es|ed|ion)|war ends?|ends? the war|peace settlement)\b/i,
-});
-
-// The model decides WHAT happened; the engine owns which event a war record is
-// bound to. Model-supplied event numbers are hints only and are rebound here from
-// event.warId plus the transition's own vocabulary, so a wrong number can never
-// bind a declaration to an unrelated event.
-const normalizeWorldWarEventLinks = (candidate) => {
-  if (!candidate || typeof candidate !== "object") return { rebound: 0 };
-  const events = normalizeArray(candidate?.events);
-  const updates = decodeWarUpdates(candidate?.warUpdates);
-  let rebound = 0;
-
-  const normalized = updates.map((update) => {
-    const warId = normalizeString(update?.id);
-    const supplied = normalizeArray(update?.eventIndexes)
-      .map(Number)
-      .filter((index) => Number.isInteger(index) && index >= 0 && index < events.length);
-
-    const sameWar = events
-      .map((event, index) => ({ event, index }))
-      .filter(({ event }) => normalizeString(event?.warId) === warId);
-
-    const hint = WORLD_WAR_TRANSITION_HINTS[normalizeString(update?.op).toLowerCase()];
-    const semantic = hint
-      ? sameWar.filter(({ event }) =>
-          hint.test(`${normalizeString(event?.title)} ${normalizeString(event?.description)}`))
-      : [];
-
-    let eventIndexes = [];
-    if (semantic.length === 1) {
-      eventIndexes = [semantic[0].index];
-    } else if (sameWar.length === 1) {
-      eventIndexes = [sameWar[0].index];
-    } else {
-      const suppliedSameWar = supplied.filter((index) =>
-        normalizeString(events[index]?.warId) === warId);
-      const suppliedSemantic = semantic.length
-        ? suppliedSameWar.filter((index) => semantic.some((row) => row.index === index))
-        : suppliedSameWar;
-      if (suppliedSemantic.length === 1) eventIndexes = suppliedSemantic;
-    }
-
-    if (JSON.stringify(eventIndexes) !== JSON.stringify(supplied)) rebound += 1;
-    return {
-      ...update,
-      eventIndexes,
-      eventIds: [],
-    };
-  });
-
-  candidate.warUpdates = normalized;
-  if (rebound) {
-    console.info(`[ai] war ledger: rebound ${rebound} record(s) from event.warId and transition semantics.`);
-  }
-  return { rebound, updates: normalized };
-};
-
 const buildWarLedgerDirective = (variables) => {
   const playerName = normalizeString(variables?.playerPolity) || "the player's polity";
   const canonicalWarContext = normalizeString(variables?.canonicalWarContext);
@@ -706,6 +643,29 @@ const validateSegmentLedgers = (candidate, { world, strict, segmentIndex = 0 }) 
     );
     normalizeWorldWarEventLinks(candidate);
     warError = validateWarLedgerPayload(candidate, { world });
+  }
+  if (warError && !strict) {
+    // The last attempt: the model was told what was wrong and still could not
+    // bind its war record, and a finished segment is not lost to that. The
+    // record's own event numbers are stamped onto their events as the warId
+    // they declare; what still cannot bind is dropped with the events' war
+    // bindings, and the events stay as narrative (repairWarLedgerPayload).
+    const first = warError;
+    const repair = repairWarLedgerPayload(candidate, { world });
+    const summary = `stamped warId on ${repair.stamped} event(s), dropped ${repair.droppedIds.length} war record(s)`
+      + `${repair.droppedIds.length ? ` (${repair.droppedIds.join(", ")})` : ""}, unbound ${repair.strippedEvents} event(s)`;
+    console.warn(
+      `[ai] war ledger salvage after the model failed its corrective retry: ${summary}; keeping the segment. `
+      + `First rejection: ${first}${repair.residual ? ` The ledger still says: ${repair.residual}` : ""}`,
+    );
+    logDebugEvent("warn", "[turn] War ledger salvage on the final attempt: the segment is kept, its canonical war changes repaired or dropped.", {
+      firstRejection: first,
+      stamped: repair.stamped,
+      droppedWarIds: repair.droppedIds,
+      unboundEvents: repair.strippedEvents,
+      residual: repair.residual,
+    });
+    warError = "";
   }
   if (warError) return warError;
 
@@ -2026,7 +1986,11 @@ This live instruction supersedes older frozen country-stat prompts and all earli
       // 1's clock abort a perfectly healthy attempt 2. The next answer re-arms it.
       idle.cancel();
       const rawText = typeof response === "string" ? response : normalizeString(response?.rawText);
-      lastRawText = rawText;
+      // A tool-call answer has no text of its own (Gemini sends the call with
+      // no text parts), so the call's input IS the answer. Kept as such, or the
+      // debug report the player copies says the provider produced nothing when
+      // the model produced a whole turn that then failed validation.
+      lastRawText = rawText || (response?.toolInput ? JSON.stringify(response.toolInput) : "");
       sawResponseBody = true;
       logDebugEvent("ai", `Task "${taskKey}" attempt ${outputAttempt} answered.`, {
         responseChars: rawText.length,
@@ -2242,7 +2206,7 @@ This live instruction supersedes older frozen country-stat prompts and all earli
       });
       logDebugEvent("ai", `Task "${taskKey}" attempt ${outputAttempt} REJECTED: ${validation.error}`, {
         clearedSchema: schemaValid,
-        rawResponse: rawText,
+        rawResponse: lastRawText,
       }, { verbose: true });
 
       failureReason = validation.error;
