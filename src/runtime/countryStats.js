@@ -1,3 +1,5 @@
+import { astronomicalYear, compareGameDates, isGameDate, parseGameDate } from "./gameDates.js";
+
 /*! Open Historia — native persistent country statistics and economic aggregation. */
 
 export const COUNTRY_STATS_SCHEMA_VERSION = 1;
@@ -83,7 +85,7 @@ export const normalizeCountryStatsTracking = (
     for (const [polity, date] of Object.entries(input.lastAutoRefreshByPolity)) {
       const key = clean(polity);
       const when = clean(date);
-      if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(when)) continue;
+      if (!key || !isGameDate(when)) continue;
       if (!trackedKeys.has(key.toLocaleLowerCase())) continue;
       lastAutoRefreshByPolity[key] = when;
     }
@@ -101,26 +103,18 @@ export const normalizeCountryStatsTracking = (
     trackedPolities,
     lastAutoRefreshByPolity,
     pendingBaselinePolities,
-    lastBatchDate: /^\d{4}-\d{2}-\d{2}$/.test(clean(input.lastBatchDate))
+    lastBatchDate: isGameDate(clean(input.lastBatchDate))
       ? clean(input.lastBatchDate)
       : "",
   };
 };
 
 export const countryStatsTrackingMonthsElapsed = (fromDate, toDate) => {
-  const parse = (value) => {
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(clean(value));
-    if (!match) return null;
-    const year = Number(match[1]);
-    const month = Number(match[2]);
-    const day = Number(match[3]);
-    if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return null;
-    return { year, month, day };
-  };
-  const from = parse(fromDate);
-  const to = parse(toDate);
+  const from = parseGameDate(fromDate);
+  const to = parseGameDate(toDate);
   if (!from || !to) return 0;
-  let months = (to.year - from.year) * 12 + (to.month - from.month);
+  // Astronomical years, so a span across 1 BC / AD 1 has no phantom year.
+  let months = (astronomicalYear(to.year) - astronomicalYear(from.year)) * 12 + (to.month - from.month);
   if (to.day < from.day) months -= 1;
   return Math.max(0, months);
 };
@@ -913,7 +907,7 @@ const HISTORY_BREAKDOWN_KEYS = Object.freeze([
 
 const normalizeHistoryDate = (value) => {
   const text = clean(value);
-  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+  return isGameDate(text) ? text : "";
 };
 
 const historyNumber = (value) => {
@@ -990,7 +984,7 @@ const normalizeHistorySeries = (value) => {
     if (sample) byDate.set(sample.date, sample); // latest source wins deterministically
   }
   return [...byDate.values()]
-    .sort((a, b) => a.date.localeCompare(b.date) || Number(a.round || 0) - Number(b.round || 0))
+    .sort((a, b) => compareGameDates(a.date, b.date) || Number(a.round || 0) - Number(b.round || 0))
     .slice(-COUNTRY_STATS_HISTORY_MAX_SAMPLES);
 };
 

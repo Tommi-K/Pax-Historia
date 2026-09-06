@@ -827,7 +827,13 @@ const EditorDrawer = ({
             </div>
             <div>
               <label style={fieldLabelStyle}>Game Date</label>
-              <input style={inputStyle} value={formState.gameDate} onChange={(event) => onChange("gameDate", event.target.value)} />
+              <input
+                style={inputStyle}
+                value={formState.gameDate}
+                onChange={(event) => onChange("gameDate", event.target.value)}
+                placeholder="YYYY-MM-DD — before AD 1 use a minus: -0218-03-01 is 1 March 218 BC"
+                title="Dates are YYYY-MM-DD. A year before AD 1 carries a leading minus and counts backwards with no year zero: -0218-03-01 is 1 March 218 BC, -0001-12-31 the last day of 1 BC."
+              />
             </div>
             <div>
               <label style={fieldLabelStyle}>Language</label>

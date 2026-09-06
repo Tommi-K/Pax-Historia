@@ -35,6 +35,7 @@ import { setWorldStateOverride } from "../Map/useWorldState.js";
 import { setUnitsOverride } from "../Map/unitsController.js";
 import { useIsMobile } from "../../runtime/useIsMobile.js";
 import { MAP_SETTING_KEYS, isBetaUnits, useMapSetting } from "../../runtime/mapSettings.js";
+import { addGameDays, formatGameDateReadable, isGameDate, normalizeGameDate } from "../../runtime/gameDates.js";
 
 dayjs.extend(advancedFormat);
 
@@ -204,9 +205,18 @@ const formatDate = (value, pattern = "MMM D, YYYY") => {
         return "Undated";
     }
 
+    // A game date in any year, BC spelled out ("1 March 218 BC"); dayjs only
+    // for values that are not game dates (timestamps).
+    const readable = formatGameDateReadable(value, pattern);
+    if (readable) return readable;
     const parsed = dayjs(value);
     return parsed.isValid() ? parsed.format(pattern) : String(value);
 };
+
+// Where a jump of `days` from `from` lands, as the widget shows it.
+const jumpLandingLabel = (from, days) =>
+    formatGameDateReadable(addGameDays(from, days), "M/D/YYYY")
+    || dayjs(from).add(Math.trunc(days), "day").format("M/D/YYYY");
 
 const formatRange = (fromDate, toDate) => {
     if (!fromDate && !toDate) {
@@ -807,14 +817,14 @@ const TimelineSkipPanel = ({
         onJump(amount * (unitToDays[customUnit] ?? 1));
     };
     const jumpOptions = [
-        { label: "6 hours", sublabel: dayjs(currentDate).format("M/D/YYYY"), days: 0.25 },
-        { label: "1 day", sublabel: dayjs(currentDate).add(1, "day").format("M/D/YYYY"), days: 1 },
-        { label: "3 days", sublabel: dayjs(currentDate).add(3, "day").format("M/D/YYYY"), days: 3 },
-        { label: "1 week", sublabel: dayjs(currentDate).add(7, "day").format("M/D/YYYY"), days: 7 },
-        { label: "1 month", sublabel: dayjs(currentDate).add(1, "month").format("M/D/YYYY"), days: 30 },
-        { label: "3 months", sublabel: dayjs(currentDate).add(3, "month").format("M/D/YYYY"), days: 90 },
-        { label: "6 months", sublabel: dayjs(currentDate).add(6, "month").format("M/D/YYYY"), days: 180 },
-        { label: "1 year", sublabel: dayjs(currentDate).add(1, "year").format("M/D/YYYY"), days: 365 },
+        { label: "6 hours", sublabel: jumpLandingLabel(currentDate, 0.25), days: 0.25 },
+        { label: "1 day", sublabel: jumpLandingLabel(currentDate, 1), days: 1 },
+        { label: "3 days", sublabel: jumpLandingLabel(currentDate, 3), days: 3 },
+        { label: "1 week", sublabel: jumpLandingLabel(currentDate, 7), days: 7 },
+        { label: "1 month", sublabel: jumpLandingLabel(currentDate, 30), days: 30 },
+        { label: "3 months", sublabel: jumpLandingLabel(currentDate, 90), days: 90 },
+        { label: "6 months", sublabel: jumpLandingLabel(currentDate, 180), days: 180 },
+        { label: "1 year", sublabel: jumpLandingLabel(currentDate, 365), days: 365 },
     ];
 
     return (
@@ -873,7 +883,7 @@ const TimelineSkipPanel = ({
             width: "5.5rem",
         }}
         >
-        {dayjs(currentDate).format("M/D/YYYY")}
+        {formatGameDateReadable(currentDate, "M/D/YYYY") || dayjs(currentDate).format("M/D/YYYY")}
         </div>
 
         {jumpOptions.map((opt) => (
@@ -2148,16 +2158,16 @@ const DateWidget = ({
         return copyToClipboard(message);
     };
     const rawGameDate = gameData?.gameDate || gameData?.startDate || "";
-    const parsedGameDate = rawGameDate ? dayjs(rawGameDate) : null;
-    const hasValidGameDate = Boolean(parsedGameDate && parsedGameDate.isValid());
+    // Any game date, BC included ("March 1st, 218 BC"); prose dates show verbatim.
+    const hasValidGameDate = isGameDate(rawGameDate);
     // Mobile shares the row with the country name, so abbreviate the month.
     const displayDate = !gameData
     ? "Loading..."
     : hasValidGameDate
-    ? parsedGameDate.format(isMobile && playerCountry ? "MMM Do, YYYY" : "MMMM Do, YYYY")
+    ? formatGameDateReadable(rawGameDate, isMobile && playerCountry ? "MMM Do, YYYY" : "MMMM Do, YYYY")
     : String(rawGameDate).trim() || "Undated";
     const currentDate = hasValidGameDate
-    ? parsedGameDate.format("YYYY-MM-DD")
+    ? normalizeGameDate(rawGameDate)
     : dayjs().format("YYYY-MM-DD");
 
     useEffect(() => {

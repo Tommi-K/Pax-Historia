@@ -11,6 +11,7 @@ import {
   canonicalWorldActor,
   createWorldActorResolver,
 } from "./nativeWorldIntegrity.js";
+import { addGameDays, compareGameDates, gameDateDayNumber, gameDateYear } from "../../runtime/gameDates.js";
 
 // Native World Director (ported from kernely's Continuum branch).
 //
@@ -164,8 +165,8 @@ export const deriveWorldConflictRiskPosture = ({
 } = {}) => {
   const world = bundle?.world || {};
   const date = normalizeString(targetDate || bundle?.game?.gameDate);
-  const yearMatch = /^(\d{4})-/.exec(date);
-  const year = yearMatch ? Number(yearMatch[1]) : null;
+  // Signed: 218 BC is -218, so an ancient scenario takes the unknown-era prior.
+  const year = gameDateYear(date);
 
   let eraAdjustment = 0;
   let eraLabel = "unknown-era neutral prior";
@@ -487,19 +488,12 @@ const truncate = (value, max = 260) => {
 };
 
 const parseIsoDate = (value) => {
-  const text = normalizeString(value);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
-  const time = Date.parse(`${text}T00:00:00Z`);
-  return Number.isFinite(time) ? time : null;
+  // Milliseconds for a game date, BC included (runtime/gameDates.js).
+  const dayNumber = gameDateDayNumber(value);
+  return dayNumber === null ? null : dayNumber * 86400000;
 };
 
-const addIsoDays = (value, days) => {
-  const parsed = parseIsoDate(value);
-  if (parsed == null) return normalizeString(value);
-  const date = new Date(parsed);
-  date.setUTCDate(date.getUTCDate() + Math.trunc(Number(days) || 0));
-  return date.toISOString().slice(0, 10);
-};
+const addIsoDays = (value, days) => addGameDays(value, Number(days) || 0) || normalizeString(value);
 
 const compareIso = (a, b) => {
   const left = parseIsoDate(a);
@@ -1166,7 +1160,7 @@ const storylineNeedsAttentionWithin = (storyline, originDate, targetDate, world 
   // Urgency is normally encoded into nextReviewDate when updates are persisted.
   // Active-war review age above is an additional compatibility guard for older
   // saves whose review date was scheduled under the pre-07.4 pressure cliff.
-  return storyline.nextReviewDate <= targetDate;
+  return compareGameDates(storyline.nextReviewDate, targetDate) <= 0;
 };
 
 const selectStorylineAttention = (world, originDate, targetDate) => {
@@ -2382,7 +2376,7 @@ export const applyWorldStorylineUpdates = ({
   const storylines = postMerge.storylines
     .sort((a, b) =>
       (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9) ||
-      String(b.lastUpdatedDate || "").localeCompare(String(a.lastUpdatedDate || "")) ||
+      compareGameDates(b.lastUpdatedDate || "", a.lastUpdatedDate || "") ||
       a.id.localeCompare(b.id)
     )
     .slice(0, MAX_PERSISTED_STORYLINES);
@@ -3229,7 +3223,7 @@ export const buildWorldInitiativeContext = (
   deduped.sort((a, b) =>
     (b.score - a.score) ||
     (a.ageDays - b.ageDays) ||
-    String(b.date || "").localeCompare(String(a.date || ""))
+    compareGameDates(b.date || "", a.date || "")
   );
 
   const bounded = selectBoundedCandidates(

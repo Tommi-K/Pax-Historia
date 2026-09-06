@@ -27,6 +27,7 @@ import {
     normalizeCountryStatsHistory,
     normalizeCountryStatsTracking,
 } from "../../runtime/countryStats.js";
+import { compareGameDates, formatGameDateReadable, gameDateDayNumber, parseGameDate } from "../../runtime/gameDates.js";
 
 // Sheets are regenerated when the game date moves; within a date they persist
 // across reloads so flipping between countries stays instant.
@@ -362,7 +363,7 @@ const DiplomacySection = ({ world, targetCountry }) => {
             .sort((left, right) => {
                 const rank = { active: 0, suspended: 1, ended: 2, expired: 3 };
                 return (rank[lowerText(left.status)] ?? 9) - (rank[lowerText(right.status)] ?? 9) ||
-                    String(right.lastUpdatedDate || right.startedDate || "").localeCompare(String(left.lastUpdatedDate || left.startedDate || ""));
+                    compareGameDates(right.lastUpdatedDate || right.startedDate || "", left.lastUpdatedDate || left.startedDate || "");
             });
 
         const currentWars = asArray(world.wars)
@@ -377,7 +378,7 @@ const DiplomacySection = ({ world, targetCountry }) => {
                 return { ...war, opponents };
             })
             .filter(Boolean)
-            .sort((left, right) => String(right.lastUpdatedDate || right.startedDate || "").localeCompare(String(left.lastUpdatedDate || left.startedDate || "")));
+            .sort((left, right) => compareGameDates(right.lastUpdatedDate || right.startedDate || "", left.lastUpdatedDate || left.startedDate || ""));
 
         return {
             relations,
@@ -579,17 +580,19 @@ const ADVANCED_UNIT_LABELS = {
 
 const formatHistoryDate = (value, { compact = false } = {}) => {
     const text = String(value || "");
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
-    if (!match) return text || "Unknown date";
-    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+    const parts = parseGameDate(text);
+    if (!parts) return text || "Unknown date";
+    // BC and early years: the game-date formatter (Intl has no era unless asked).
+    if (parts.year < 1000) return formatGameDateReadable(text, compact ? "MMM YYYY" : "D MMM YYYY");
+    const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
     return new Intl.DateTimeFormat(undefined, compact
         ? { month: "short", year: "numeric", timeZone: "UTC" }
         : { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(date);
 };
 
 const historyDateMs = (value) => {
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ""));
-    return match ? Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : NaN;
+    const dayNumber = gameDateDayNumber(value);
+    return dayNumber === null ? NaN : dayNumber * 86400000;
 };
 
 const advancedRangeStyle = (active) => ({

@@ -17,6 +17,7 @@ import {
   patrolPoint,
   stepToward,
 } from "./unitMotion.js";
+import { compareGameDates, normalizeGameDate } from "./gameDates.js";
 
 export const GAME_DEFAULTS = {
   country: "",
@@ -1434,7 +1435,7 @@ const deriveNextMilestoneFrom = (milestones, stored) => {
   if (pending.length > 0) {
     // Dated milestones first, earliest wins. An undated one is a "next, whenever"
     // and only surfaces when nothing dated is outstanding.
-    const dated = pending.filter((entry) => entry.date).sort((a, b) => a.date.localeCompare(b.date));
+    const dated = pending.filter((entry) => entry.date).sort((a, b) => compareGameDates(a.date, b.date));
     const next = dated[0] || pending[0];
     // Carries the recurrence through, so the card can mark it ↻ and show the
     // tally. projects.js has the same derivation for the live view; if you add a
@@ -3052,7 +3053,7 @@ const normalizeWorldWars = (value) => {
   return [...deduped.values()]
     .sort((a, b) =>
       (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9) ||
-      String(b.lastUpdatedDate || b.startedDate || "").localeCompare(String(a.lastUpdatedDate || a.startedDate || "")) ||
+      compareGameDates(b.lastUpdatedDate || b.startedDate || "", a.lastUpdatedDate || a.startedDate || "") ||
       a.id.localeCompare(b.id),
     )
     .slice(0, MAX_WORLD_WARS);
@@ -3165,7 +3166,7 @@ const normalizeWorldAgreements = (value, identityWorld) => {
   return [...deduped.values()]
     .sort((a, b) =>
       (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9) ||
-      String(b.lastUpdatedDate || b.startedDate || "").localeCompare(String(a.lastUpdatedDate || a.startedDate || "")) ||
+      compareGameDates(b.lastUpdatedDate || b.startedDate || "", a.lastUpdatedDate || a.startedDate || "") ||
       a.id.localeCompare(b.id),
     )
     .slice(0, MAX_WORLD_AGREEMENTS);
@@ -3427,7 +3428,10 @@ export const isPolityLandless = (world, code) => {
 // don't parse and pass through untouched.
 const canonicalizeDateString = (value) => {
   const text = normalizeOptionalString(value);
-  if (!text || /^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  if (!text) return text;
+  // Any game date, BC included ("-218-03-01" becomes "-0218-03-01").
+  const canonical = normalizeGameDate(text);
+  if (canonical) return canonical;
   // An ISO date prefix (datetime forms) is authoritative — slicing it avoids
   // the timezone day-shift of parsing "...T00:00:00Z" into local time.
   const prefix = /^(\d{4}-\d{2}-\d{2})[T ]/.exec(text);

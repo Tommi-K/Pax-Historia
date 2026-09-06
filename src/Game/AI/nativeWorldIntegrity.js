@@ -1,4 +1,5 @@
 import { resolveStockCountryCode } from "../../runtime/polityIdentity.js";
+import { compareGameDates, gameDateDayNumber } from "../../runtime/gameDates.js";
 // Native World Integrity (ported from kernely's Continuum branch).
 //
 // This module is deliberately separate from the World Director and Timeline
@@ -202,11 +203,10 @@ const stableHash = (value) => {
   return hash >>> 0;
 };
 
+// Milliseconds for a game date, BC included (runtime/gameDates.js).
 const parseIsoDate = (value) => {
-  const text = normalizeString(value);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
-  const time = Date.parse(`${text}T00:00:00Z`);
-  return Number.isFinite(time) ? time : null;
+  const dayNumber = gameDateDayNumber(value);
+  return dayNumber === null ? null : dayNumber * 86400000;
 };
 
 export const worldIntegrityAgeDays = (originDate, eventDate) => {
@@ -219,8 +219,8 @@ export const worldIntegrityAgeDays = (originDate, eventDate) => {
 export const latestCanonicalWorldEventDate = (events, originDate) =>
   normalizeArray(events)
     .map((event) => normalizeString(event?.date))
-    .filter((date) => parseIsoDate(date) != null && (!originDate || date <= originDate))
-    .sort()
+    .filter((date) => parseIsoDate(date) != null && (!originDate || compareGameDates(date, originDate) <= 0))
+    .sort(compareGameDates)
     .at(-1) || "";
 
 const activeWarEntries = (world) =>
@@ -1885,7 +1885,7 @@ const applyLowTrajectoryFeedGuard = ({
     })
     .sort((a, b) =>
       (b.keepScore - a.keepScore) ||
-      String(a.event?.date || "").localeCompare(String(b.event?.date || "")) ||
+      compareGameDates(a.event?.date || "", b.event?.date || "") ||
       a.index - b.index
     );
 

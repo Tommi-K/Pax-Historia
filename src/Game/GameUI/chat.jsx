@@ -28,6 +28,7 @@ import { getLibraryState } from "../../runtime/library.js";
 import { readChatsState, writeChatsState, readInterceptsState, readWorldState, readWorldStateView, writeWorldState, applyProjectOpsToWorld } from "../../runtime/gameState.js";
 import { spyOperationOps } from "../../runtime/projects.js";
 import Markdown, { MarkdownStyleInjector } from "./markdown.jsx";
+import { formatGameDateReadable, normalizeGameDate, parseGameDate } from "../../runtime/gameDates.js";
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 
@@ -1014,19 +1015,21 @@ const CountryTurnLabel = ({ country, remaining }) => {
 const chatDateKey = (value) => {
     const raw = String(value ?? "").trim();
     if (!raw) return "";
-    const isoDay = raw.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
-    return isoDay || raw;
+    return normalizeGameDate(raw) || raw;
 };
 
 const formatChatDateLabel = (value) => {
     const raw = String(value ?? "").trim();
     if (!raw) return "";
 
+    const parts = parseGameDate(raw);
+    // Years before 1000 (BC included) go through the game-date formatter: the
+    // locale formatter has no era unless asked and Date reads 0-99 as 1900+.
+    if (parts && parts.year < 1000) return formatGameDateReadable(raw, "MMMM D, YYYY");
     // Bare YYYY-MM-DD parses as UTC in browsers, which can shift a displayed day in
     // some time zones. Noon-local keeps an in-game calendar date exactly on that day.
-    const isoDay = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    const parsed = isoDay
-        ? new Date(Number(isoDay[1]), Number(isoDay[2]) - 1, Number(isoDay[3]), 12, 0, 0)
+    const parsed = parts
+        ? new Date(parts.year, parts.month - 1, parts.day, 12, 0, 0)
         : new Date(raw);
 
     return Number.isNaN(parsed.getTime())

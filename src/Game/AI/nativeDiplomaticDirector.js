@@ -13,6 +13,7 @@
 import { normalizeEvents, normalizeWorldState } from "../../runtime/gameState.js";
 import { toCountryName } from "../../runtime/ownerNames.js";
 import { resolvePolityIdentity } from "../../runtime/polityIdentity.js";
+import { compareGameDates, isGameDate } from "../../runtime/gameDates.js";
 
 export const DIPLOMATIC_LEDGER_VERSION = 1;
 export const DIPLOMATIC_DIRECTOR_VERSION = "0.1.7-round-zero-baseline";
@@ -79,11 +80,10 @@ const unique = (values, limit = 64) => {
   return out;
 };
 
+// The text back when it is a game date (BC included, runtime/gameDates.js), else "".
 const parseIsoDate = (value) => {
   const text = clean(value);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return "";
-  const parsed = Date.parse(`${text}T00:00:00Z`);
-  return Number.isFinite(parsed) ? text : "";
+  return isGameDate(text) ? text : "";
 };
 
 const slug = (value) => clean(value)
@@ -1192,7 +1192,7 @@ export const applyAgreementUpdates = ({ world, updates, events = [], stopDate = 
   const agreements = [...map.values()]
     .sort((a, b) =>
       (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9) ||
-      String(b.lastUpdatedDate || b.startedDate || "").localeCompare(String(a.lastUpdatedDate || a.startedDate || "")) ||
+      compareGameDates(b.lastUpdatedDate || b.startedDate || "", a.lastUpdatedDate || a.startedDate || "") ||
       a.id.localeCompare(b.id)
     )
     .slice(0, MAX_AGREEMENTS);
@@ -1626,7 +1626,7 @@ const applyLegacyHostilityEvent = (agreementMap, relationMap, event, world, rost
     // When re-checking history after a later standing-alliance chat seed, an older
     // clash must not overwrite newer canonical evidence that the relationship had
     // already recovered. Chronological first-pass processing is unaffected.
-    if (!closedAlliance && priorDate && eventDate && eventDate < priorDate) continue;
+    if (!closedAlliance && priorDate && eventDate && compareGameDates(eventDate, priorDate) < 0) continue;
     // Legacy migration is intentionally sparse. Historical combat does not by
     // itself create a permanent present-day relation row for every belligerent.
     // Preserve it only when the pair was already tracked (for example by a treaty)
@@ -1808,7 +1808,7 @@ export const migrateLegacyDiplomaticState = ({ world: worldLike, events = [], ch
   const beforeAgreements = agreementMap.size;
   const normalizedEvents = normalizeEvents(events)
     .slice()
-    .sort((a, b) => String(a?.date || "").localeCompare(String(b?.date || "")));
+    .sort((a, b) => compareGameDates(a?.date || "", b?.date || ""));
 
   for (const event of normalizedEvents) {
     const title = clean(event?.title);
@@ -1886,7 +1886,7 @@ export const migrateLegacyDiplomaticState = ({ world: worldLike, events = [], ch
   const agreements = [...agreementMap.values()]
     .sort((a, b) =>
       (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9) ||
-      String(b.lastUpdatedDate || b.startedDate || "").localeCompare(String(a.lastUpdatedDate || a.startedDate || "")) ||
+      compareGameDates(b.lastUpdatedDate || b.startedDate || "", a.lastUpdatedDate || a.startedDate || "") ||
       a.id.localeCompare(b.id)
     )
     .slice(0, MAX_AGREEMENTS);

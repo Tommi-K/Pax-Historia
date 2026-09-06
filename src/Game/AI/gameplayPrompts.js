@@ -49,7 +49,7 @@ TRANSACTION RULES
 19. This is PREVIEW GENERATION. Nothing is being applied yet. Describe what WOULD change, not what has already been persisted by this call.
 
 PROVIDER TRANSPORT FIELD SHAPES
-The six *Json fields are STRINGS whose contents must be valid JSON arrays. Keep JSON keys exactly as shown. Omit optional object fields when irrelevant, but never invent new keys.
+The six *Json fields are STRINGS whose contents must be valid JSON arrays. Keep JSON keys exactly as shown. Omit optional object fields when irrelevant, but never invent new keys. Dates are YYYY-MM-DD; a year before AD 1 is written with a leading minus and counts backwards with no year zero (-0218-03-01 is 1 March 218 BC, -0001-12-31 the last day of 1 BC), and every date you output in such a scenario uses exactly that form.
 
 eventsJson element:
 {"date":"YYYY-MM-DD","title":"","description":"","importance":"minor|major","kind":"world|player|diplomacy|military","tags":["Military|Diplomacy|Economy|Politics|Culture|Disaster"],"notable":false,"playerRelated":false,"warId":"","combatants":[],"impacts":{"regionTransfers":[],"regionControlOps":[],"regionClaims":[],"polityChanges":[],"unitOps":[],"markerOps":[],"createdChats":[],"projectOps":[]}}

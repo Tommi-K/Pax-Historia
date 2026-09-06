@@ -13,6 +13,7 @@ import {
     readActionsState,
     writeActionsState,
 } from "../../runtime/gameState.js";
+import { formatGameDateReadable } from "../../runtime/gameDates.js";
 
 dayjs.extend(advancedFormat);
 
@@ -276,7 +277,7 @@ const ActionsPanel = ({ isOpen, onClose, onOpenAdvisor }) => {
                 }
 
                 if (data.gameDate) {
-                    setGameDate(dayjs(data.gameDate).format("MMMM Do, YYYY"));
+                    setGameDate(formatGameDateReadable(data.gameDate, "MMMM Do, YYYY") || dayjs(data.gameDate).format("MMMM Do, YYYY"));
                 }
 
                 // After a jump, applySimulationResult re-marks last round's actions
