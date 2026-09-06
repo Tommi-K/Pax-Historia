@@ -7,6 +7,7 @@
 
 import { STORES, idbGet, idbGetAll, idbGetAllKeys, idbPut, idbPutPair, idbDelete, kvGet, kvPut } from "./idb.js";
 import { serializeWrite } from "./writeQueue.js";
+import { coarsenFeatureCollection } from "../coarseGeometry.js";
 import {
   cloneJson, nowIso, jsonResponse, errorResponse, binaryResponse, base64ToBytes, bytesToBase64,
   parseJsonValue, serializeJsonValue,
@@ -989,7 +990,20 @@ const removeScenarioAsset = async (id, key) => {
   return getScenarioDetails(id);
 };
 
-const scenarioAssetResponse = (record, key, rangeHeader) => {
+// The coarse regions copy the desktop server keeps beside the upload, here
+// computed on demand and cached against the stored value, so a re-upload
+// (a new value) rebuilds it and the same value never does twice.
+const coarseRegionsCache = new Map(); // scenario id -> { source, text }
+const coarseRegionsText = (record) => {
+  const source = record.geojson?.regionsGeojson;
+  const cached = coarseRegionsCache.get(record.id);
+  if (cached && cached.source === source) return cached.text;
+  const text = serializeJsonValue(coarsenFeatureCollection(parseJsonValue(source, null)));
+  coarseRegionsCache.set(record.id, { source, text });
+  return text;
+};
+
+const scenarioAssetResponse = (record, key, rangeHeader, { coarse = false } = {}) => {
   if (key === COVER_IMAGE_ASSET_KEY) {
     if (!record.cover) throw new Error("Asset not found");
     return binaryResponse(record.cover.bytes, record.cover.contentType || "application/octet-stream", rangeHeader);
@@ -1005,7 +1019,8 @@ const scenarioAssetResponse = (record, key, rangeHeader) => {
   }
   if (SCENARIO_GEOJSON_ASSET_KEYS.includes(key)) {
     if (record.geojson?.[key] === undefined) throw new Error("Asset not found");
-    return new Response(serializeJsonValue(record.geojson[key]), { status: 200, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
+    const text = coarse && key === "regionsGeojson" ? coarseRegionsText(record) : serializeJsonValue(record.geojson[key]);
+    return new Response(text, { status: 200, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
   }
   throw new Error(`Unsupported asset key: ${key}`);
 };
@@ -1243,7 +1258,7 @@ export const handleScenarios = async ({ method, segments, body, rawBody, content
     if (sub === "export" && method === "GET") return jsonResponse(await exportScenarioBundle(id));
     if (sub === "assets" && segments[2]) {
       const key = decodeURIComponent(segments[2]);
-      if (method === "GET") { const record = await getScenario(id); if (!record) throw new Error(`Scenario not found: ${id}`); return scenarioAssetResponse(record, key, rangeHeader); }
+      if (method === "GET") { const record = await getScenario(id); if (!record) throw new Error(`Scenario not found: ${id}`); return scenarioAssetResponse(record, key, rangeHeader, { coarse: query?.get("coarse") === "1" }); }
       if (method === "PUT") return jsonResponse(await uploadScenarioAsset(id, key, rawBody, contentType));
       if (method === "DELETE") return jsonResponse(await removeScenarioAsset(id, key));
     }

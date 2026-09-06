@@ -1324,7 +1324,7 @@ const LibraryTopBar = () => {
         // Load custom region geometry so the map renders the scenario's actual
         // boundaries instead of the stock world seed.
         if (details?.data?.world?.customRegions) {
-          downloadScenarioJsonAsset(scenario.id, "regionsGeojson")
+          downloadScenarioJsonAsset(scenario.id, "regionsGeojson", { coarse: true })
             .then((geojson) => { if (geojson) setCustomRegionData(geojson); })
             .catch(() => {});
         }
@@ -1933,7 +1933,7 @@ const LibraryTopBar = () => {
         setPickerOwnerOverrides(seedWorld.regionOwnershipOverrides ?? null);
         // The map editor just saved custom region geometry — load it so the
         // country picker renders the scenario's actual map, not the stock seed.
-        downloadScenarioJsonAsset(scenario.id, "regionsGeojson")
+        downloadScenarioJsonAsset(scenario.id, "regionsGeojson", { coarse: true })
           .then((geojson) => { if (geojson) setCustomRegionData(geojson); })
           .catch(() => {});
       })

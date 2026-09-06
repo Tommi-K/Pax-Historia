@@ -161,6 +161,7 @@ server/data/
 Key path constants live at `server/libraryStore.js:19-35`: `SCENARIOS_DIR`, `GAMES_DIR`, `SCENARIO_MANIFEST_PATH`, `GAME_MANIFEST_PATH`, `DATA_ASSETS_DIR`, plus the read-only source roots `DIST_DIR`/`PUBLIC_DIR` and `PMTILES_ASSETS_DIR = public/assets`.
 
 ### Asset-file groupings (the vocabulary of `assetKey`)
+
 Defined at `server/libraryStore.js:240-324`. These maps drive every read/write/serve path:
 
 | Group | Keys → files | Notes |
@@ -175,6 +176,8 @@ Defined at `server/libraryStore.js:240-324`. These maps drive every read/write/s
 | `*_IMAGE_ASSET_FILES` | `cover`→`cover-image.bin` | Content type recorded in meta |
 | `UPLOADABLE_SCENARIO_ASSET_FILES` | image ∪ optional-JSON ∪ PMTiles ∪ geojson | The valid `:assetKey` set for scenario upload/serve/delete |
 | `UPLOADABLE_GAME_ASSET_FILES` | just `cover` | Games only accept a cover upload |
+
+> `GET /api/scenarios/:id/assets/regionsGeojson?coarse=1` serves a coarse copy of the regions (`resolveScenarioCoarseRegionsAsset`, `src/runtime/coarseGeometry.js`): the far tier's Douglas-Peucker coarsening, built once per upload beside it as `regions.coarse.geojson` and invalidated by a size+mtime stamp. The country picker draws that (a few MB) instead of the full-resolution file (221 MB for the stock world); the web store computes the same on demand. Never exported or cloned.
 
 `flags`/`tags` are separate JSON assets (not fields on `world.json`) specifically because `world.json` is re-polled every 5 s and a few hundred flags would be megabytes on every poll (`server/libraryStore.js:258-270`). See [World state](world-state.md).
 

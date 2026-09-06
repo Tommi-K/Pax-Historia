@@ -26,6 +26,7 @@ import {
   removeGameAsset,
   removeScenarioAsset,
   resolveGameUploadAsset,
+  resolveScenarioCoarseRegionsAsset,
   resolveScenarioUploadAsset,
   resolveRuntimeBinaryAsset,
   setActiveGame,
@@ -599,7 +600,12 @@ app.put("/api/scenarios/:scenarioId/import", largeJsonParser, (req, res) => {
 
 app.get("/api/scenarios/:scenarioId/assets/:assetKey", (req, res) => {
   try {
-    const asset = resolveScenarioUploadAsset(req.params.scenarioId, req.params.assetKey);
+    // ?coarse=1 on the regions: the far tier's coarsening of the same file,
+    // for previews that never zoom in (the country picker).
+    const coarse = req.params.assetKey === "regionsGeojson" && req.query?.coarse === "1";
+    const asset = coarse
+      ? resolveScenarioCoarseRegionsAsset(req.params.scenarioId)
+      : resolveScenarioUploadAsset(req.params.scenarioId, req.params.assetKey);
     streamBinaryFile(req, res, asset.sourcePath, asset.contentType);
   } catch (error) {
     sendError(res, 404, error);
