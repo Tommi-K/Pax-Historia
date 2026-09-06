@@ -251,12 +251,12 @@ Every event may carry an `impacts` object (`normalizeEventImpacts`, `src/runtime
 |---|---|---|---|
 | `country` | `string` | `""` | The player's owner code/name. |
 | `difficulty` | `string` | `"standard"` | Feeds `difficultyDirective` in the prompt. |
-| `gameDate` | `string` | `""` | Current in-game date (`YYYY-MM-DD`), advanced each jump to `result.stopDate`. |
+| `gameDate` | `string` | `""` | Current in-game date (`YYYY-MM-DD`; a year before AD 1 carries a leading minus and counts backwards with no year zero, so `-0218-03-01` is 1 March 218 BC — see `src/runtime/gameDates.js`), advanced each jump to `result.stopDate`. |
 | `startDate` | `string` | `""` | Scenario start date. |
 | `language` | `string` | `"English"` | UI/content language. |
 | `round` | `int > 0` | `1` | Turn counter, `+1` each jump (`gameplay.js:1324`). |
 
-`canonicalizeDateString` (`:939`) repairs `gameDate`/`startDate` from loose formats (`"2016-12-31T00:00:00.000Z"`, `"December 31, 2016"`) back to strict `YYYY-MM-DD`. Without it, `addIsoDays` rejects the value and every jump computes `target == origin`, freezing the clock while the model re-simulates the past. Deliberately non-Gregorian dates (`"1200 BCE"`) don't parse and pass through untouched.
+`canonicalizeDateString` repairs `gameDate`/`startDate` from loose formats (`"2016-12-31T00:00:00.000Z"`, `"December 31, 2016"`, `"-218-03-01"`) back to the canonical form (`normalizeGameDate`). Without it, the jump's date arithmetic rejects the value and every jump computes `target == origin`, freezing the clock while the model re-simulates the past. **Every parse, step, difference, comparison and display of a game date goes through `src/runtime/gameDates.js`** — BC years are negative, there is no year zero, the arithmetic is astronomical inside, and comparing two date strings is wrong for BC (`-0218` sorts before `-0300` as text, yet 218 BC comes after 300 BC). Prose dates (`"Third Age 3019"`) don't parse and pass through untouched, on the lenient validation branch.
 
 ---
 

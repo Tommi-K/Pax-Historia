@@ -22,6 +22,7 @@ import COUNTRY_NAMES from "../../runtime/generated/countryNames.js";
 import { DIFFICULTY_LEVELS, normalizeDifficulty } from "../../runtime/difficulty.js";
 import { applyGameMasterPreview, previewGameMasterCommand } from "../AI/gameplay.js";
 import { setRegionClickInterceptor } from "../Selection/Regions.jsx";
+import { compareGameDates, isGameDate } from "../../runtime/gameDates.js";
 
 const PANEL_TOP = "4.75rem";
 const EMPTY_FEATURES = { type: "FeatureCollection", features: [] };
@@ -1077,7 +1078,7 @@ const sortEventsChronologically = (events) => events
     .sort((left, right) => {
         const leftDate = cleanEventText(left.event?.date);
         const rightDate = cleanEventText(right.event?.date);
-        if (leftDate && rightDate && leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+        if (leftDate && rightDate && leftDate !== rightDate) return compareGameDates(leftDate, rightDate);
         if (leftDate && !rightDate) return -1;
         if (!leftDate && rightDate) return 1;
         const leftCreated = cleanEventText(left.event?.createdAt);
@@ -1087,7 +1088,7 @@ const sortEventsChronologically = (events) => events
     })
     .map(({ event }) => event);
 
-const eventDateLooksIso = (value) => /^\d{4}-\d{2}-\d{2}$/.test(cleanEventText(value));
+const eventDateLooksIso = (value) => isGameDate(cleanEventText(value));
 
 const historyEntryDate = (entry) => cleanEventText(entry?.toDate || entry?.date || entry?.fromDate);
 
@@ -1161,7 +1162,7 @@ const syncManualEventTimelineHistory = (worldInput, eventsInput, game) => {
             return true;
         });
 
-    const orderedManual = [...manualEvents].sort((a, b) => cleanEventText(a.date).localeCompare(cleanEventText(b.date)));
+    const orderedManual = [...manualEvents].sort((a, b) => compareGameDates(cleanEventText(a.date), cleanEventText(b.date)));
 
     for (const event of orderedManual) {
         const eventId = cleanEventText(event.id);
@@ -1193,7 +1194,7 @@ const syncManualEventTimelineHistory = (worldInput, eventsInput, game) => {
 
         let insertAt = history.findIndex((entry) => {
             const entryDate = historyEntryDate(entry);
-            return eventDateLooksIso(date) && eventDateLooksIso(entryDate) && date > entryDate;
+            return eventDateLooksIso(date) && eventDateLooksIso(entryDate) && compareGameDates(date, entryDate) > 0;
         });
         if (insertAt < 0) insertAt = history.length;
         history.splice(insertAt, 0, manualRecord);
@@ -1454,7 +1455,7 @@ const EventEditorView = ({ meta, header, busy, status, game, runBusy }) => {
             return haystack.includes(q);
         });
         return list.sort((a, b) => {
-            const dateCompare = cleanEventText(a.event?.date).localeCompare(cleanEventText(b.event?.date));
+            const dateCompare = compareGameDates(cleanEventText(a.event?.date), cleanEventText(b.event?.date));
             const createdCompare = cleanEventText(a.event?.createdAt).localeCompare(cleanEventText(b.event?.createdAt));
             const sourceCompare = a.sourceIndex - b.sourceIndex;
             const result = dateCompare || createdCompare || sourceCompare;

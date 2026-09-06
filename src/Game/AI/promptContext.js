@@ -18,6 +18,7 @@ import { isBetaUnits } from "../../runtime/mapSettings.js";
 import { buildForcePostureText } from "./forcePosture.js";
 import { STALE_ROUNDS, describeTimeline, deriveProjectFlags, isPlayerProject } from "../../runtime/projects.js";
 import { buildTerritoryIndex } from "./territoryOutlines.js";
+import { formatGameDateReadable } from "../../runtime/gameDates.js";
 
 const normalizeString = (value) => String(value ?? "").trim();
 const normalizeArray = (value) => (Array.isArray(value) ? value : []);
@@ -850,6 +851,9 @@ export const formatActionsForPrompt = (actions) => normalizeArray(actions)
   .join("\n");
 
 export const formatDateReadable = (value) => {
+  // Any game date, BC spelled out ("1 March 218 BC"); dayjs for the rest.
+  const readable = formatGameDateReadable(value, "D MMMM YYYY");
+  if (readable) return readable;
   const parsed = dayjs(value);
   return parsed.isValid() ? parsed.format("D MMMM YYYY") : normalizeString(value);
 };

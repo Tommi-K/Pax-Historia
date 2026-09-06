@@ -153,6 +153,7 @@ import { logDebugEvent } from "../../runtime/debugLog.js";
 import { isProviderConfigured } from "./providerConfig.js";
 import { assertCampaignUnchanged } from "../../runtime/campaignGuard.js";
 import { getLibraryState } from "../../runtime/library.js";
+import { addGameDays, compareGameDates, diffGameDays, gameDateDayNumber, normalizeGameDate, parseGameDate } from "../../runtime/gameDates.js";
 
 const CHAT_HINT_PATTERNS = [
   /\bchat\b/i,
@@ -209,36 +210,19 @@ const cloneValue = (value) => {
 const normalizeString = (value) => String(value ?? "").trim();
 const normalizeArray = (value) => (Array.isArray(value) ? value : []);
 
-const parseIsoDate = (value) => {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(normalizeString(value));
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  if (year < 1 || month < 1 || month > 12) return null;
-  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  return day >= 1 && day <= daysInMonth[month - 1] ? { day, month, year } : null;
-};
-
-const addIsoDays = (value, days) => {
-  const parsed = parseIsoDate(value);
-  if (!parsed) return "";
-  const date = new Date(0);
-  date.setUTCHours(0, 0, 0, 0);
-  date.setUTCFullYear(parsed.year, parsed.month - 1, parsed.day);
-  date.setUTCDate(date.getUTCDate() + days);
-  const year = date.getUTCFullYear();
-  if (!Number.isFinite(date.getTime()) || year < 1 || year > 9999) return "";
-  return `${String(year).padStart(4, "0")}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
-};
+// Game dates in any year — a year before AD 1 carries a leading minus and
+// counts backwards with no year zero (runtime/gameDates.js). Never compare two
+// dates as strings: "-0218" sorts before "-0300" as text, and 218 BC comes
+// after 300 BC.
+const parseIsoDate = parseGameDate;
+const addIsoDays = addGameDays;
 
 export const validateTimelineDates = ({ candidate, mode, originDate, targetDate, requireAdvance = false }) => {
   const stopDate = normalizeString(candidate?.stopDate);
   if (!parseIsoDate(originDate)) {
     const eventDates = normalizeArray(candidate?.events).map((event) => normalizeString(event?.date));
     const outputDates = [stopDate, ...eventDates];
-    const malformedIsoIndex = outputDates.findIndex((date) => /^\d{4}-/.test(date) && !parseIsoDate(date));
+    const malformedIsoIndex = outputDates.findIndex((date) => /^-?\d{1,6}-\d/.test(date) && !parseIsoDate(date));
     if (malformedIsoIndex >= 0) {
       const path = malformedIsoIndex === 0 ? "$.stopDate" : `$.events[${malformedIsoIndex - 1}].date`;
       return `${path} must be a real Gregorian date when using YYYY-MM-DD format.`;
@@ -253,8 +237,8 @@ export const validateTimelineDates = ({ candidate, mode, originDate, targetDate,
       let previousDate = "";
       for (let index = 0; index < eventDates.length; index += 1) {
         if (!parseIsoDate(eventDates[index])) return `$.events[${index}].date must use the same YYYY-MM-DD format as $.stopDate.`;
-        if (eventDates[index] > stopDate) return `$.events[${index}].date must not be later than ${stopDate}.`;
-        if (previousDate && eventDates[index] < previousDate) return `$.events[${index}].date must not precede the previous event date.`;
+        if (compareGameDates(eventDates[index], stopDate) > 0) return `$.events[${index}].date must not be later than ${stopDate}.`;
+        if (previousDate && compareGameDates(eventDates[index], previousDate) < 0) return `$.events[${index}].date must not precede the previous event date.`;
         previousDate = eventDates[index];
       }
     }
@@ -262,10 +246,10 @@ export const validateTimelineDates = ({ candidate, mode, originDate, targetDate,
   }
   if (!parseIsoDate(stopDate)) return `$.stopDate must be a real date in YYYY-MM-DD format; received ${stopDate || "an empty value"}.`;
   if (mode === "auto") {
-    if (stopDate <= originDate || stopDate > targetDate) {
+    if (compareGameDates(stopDate, originDate) <= 0 || compareGameDates(stopDate, targetDate) > 0) {
       return `$.stopDate must be after ${originDate} and no later than ${targetDate}.`;
     }
-  } else if (stopDate !== targetDate) {
+  } else if (compareGameDates(stopDate, targetDate) !== 0) {
     return `$.stopDate must equal the requested target date ${targetDate}.`;
   }
 
@@ -278,10 +262,10 @@ export const validateTimelineDates = ({ candidate, mode, originDate, targetDate,
     // single legal date ("after Jan 14 and no later than Jan 15") that models
     // constantly missed by dating events "today" — burning the strict attempt
     // (and the whole turn, when the retry ran out of road) over nothing.
-    if (eventDate < originDate || eventDate > stopDate) {
+    if (compareGameDates(eventDate, originDate) < 0 || compareGameDates(eventDate, stopDate) > 0) {
       return `$.events[${index}].date must be on or after ${originDate} and no later than ${stopDate}.`;
     }
-    if (eventDate < previousDate) return `$.events[${index}].date must not precede the previous event date.`;
+    if (compareGameDates(eventDate, previousDate) < 0) return `$.events[${index}].date must not precede the previous event date.`;
     previousDate = eventDate;
   }
   return "";
@@ -296,25 +280,25 @@ export const validateTimelineDates = ({ candidate, mode, originDate, targetDate,
 // dates beats canned events every time (a 1-day skip whose model "kept going"
 // used to trash the whole turn exactly this way).
 export const clampTimelineDates = (candidate, { mode, originDate, targetDate }) => {
-  if (!parseIsoDate(originDate)) return; // textual/BCE scenarios use the lenient branch
+  if (!parseIsoDate(originDate)) return; // prose-dated scenarios ("Third Age 3019") use the lenient branch
   let stopDate = normalizeString(candidate?.stopDate);
   if (mode === "auto") {
-    if (!parseIsoDate(stopDate) || stopDate <= originDate || stopDate > targetDate) stopDate = targetDate;
+    if (!parseIsoDate(stopDate) || compareGameDates(stopDate, originDate) <= 0 || compareGameDates(stopDate, targetDate) > 0) stopDate = targetDate;
   } else {
     stopDate = targetDate;
   }
   candidate.stopDate = stopDate;
   // Mirrors validation: on-or-after the origin is in-window for every jump
   // length, so strays dated before the origin pull up to the origin itself.
-  const floor = originDate > stopDate ? stopDate : originDate;
+  const floor = compareGameDates(originDate, stopDate) > 0 ? stopDate : originDate;
   let previous = floor;
   for (const event of normalizeArray(candidate?.events)) {
     if (!event || typeof event !== "object") continue;
     let date = normalizeString(event.date);
     if (!parseIsoDate(date)) date = stopDate;
-    if (date <= originDate) date = floor;
-    if (date > stopDate) date = stopDate;
-    if (date < previous) date = previous;
+    if (compareGameDates(date, originDate) <= 0) date = floor;
+    if (compareGameDates(date, stopDate) > 0) date = stopDate;
+    if (compareGameDates(date, previous) < 0) date = previous;
     event.date = date;
     previous = date;
   }
@@ -1309,10 +1293,8 @@ const difficultyScopeForTask = (taskKey) => {
 // Telemetry: how much in-game time this task's prompt covers, from the round
 // dates the template variables carry. Null for tasks without a window.
 const computeSimulatedDays = (variables) => {
-  const origin = Date.parse(String(variables?.date ?? ""));
-  const target = Date.parse(String(variables?.targetDate ?? ""));
-  if (!Number.isFinite(origin) || !Number.isFinite(target)) return null;
-  return Math.max(0, Math.round((target - origin) / 86400000));
+  const days = diffGameDays(variables?.date, variables?.targetDate);
+  return days === null ? null : Math.max(0, days);
 };
 
 const runJsonTask = async (taskKey, {
@@ -7122,10 +7104,8 @@ const buildStatsPreviousMacroContext = (previous, macroPlan = []) => {
 };
 
 const statsDateMillis = (value) => {
-  const parsed = parseIsoDate(value);
-  if (!parsed) return null;
-  const time = Date.UTC(parsed.year, parsed.month - 1, parsed.day);
-  return Number.isFinite(time) ? time : null;
+  const dayNumber = gameDateDayNumber(value);
+  return dayNumber === null ? null : dayNumber * 86400000;
 };
 
 const statsElapsedYears = (fromDate, toDate) => {
@@ -10061,13 +10041,7 @@ const normalizeGameMasterWarEventBindings = (candidate) => {
   return candidate;
 };
 
-const normalizeGameMasterIsoDate = (value) => {
-  const raw = normalizeString(value).slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return "";
-  const parsed = new Date(`${raw}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) return "";
-  return parsed.toISOString().slice(0, 10) === raw ? raw : "";
-};
+const normalizeGameMasterIsoDate = (value) => normalizeGameDate(value);
 
 const GAME_MASTER_REQUEST_MONTHS = Object.freeze({
   jan: 1, january: 1,
@@ -10106,7 +10080,7 @@ export const extractExplicitGameMasterRequestDates = (requestText) => {
     if (normalized) dates.add(normalized);
   };
 
-  for (const match of request.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) {
+  for (const match of request.matchAll(/(?<![\d-])(-?\d{1,6})-(\d{2})-(\d{2})\b/g)) {
     add(`${match[1]}-${match[2]}-${match[3]}`);
   }
 
@@ -10169,7 +10143,7 @@ const validateGameMasterChronology = (candidate, game) => {
   const events = normalizeArray(candidate?.events);
   for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
     const eventDate = normalizeGameMasterIsoDate(events[eventIndex]?.date);
-    if (!eventDate || eventDate <= currentDate) continue;
+    if (!eventDate || compareGameDates(eventDate, currentDate) <= 0) continue;
     if (!gameMasterEventHasCanonicalEffects(candidate, eventIndex)) continue;
 
     return `$.events[${eventIndex}] is dated ${eventDate}, after the current game date ${currentDate}, but it establishes canonical state changes. GM Apply never advances time, so date it on or before ${currentDate} or drop its structured effects.`;
@@ -10695,7 +10669,7 @@ const insertGameMasterHistoryEntry = (historyInput, entry) => {
   const entryDate = normalizeString(entry?.toDate || entry?.date || entry?.fromDate);
   let insertAt = history.findIndex((item) => {
     const itemDate = normalizeString(item?.toDate || item?.date || item?.fromDate);
-    return entryDate && itemDate && entryDate > itemDate;
+    return entryDate && itemDate && compareGameDates(entryDate, itemDate) > 0;
   });
   if (insertAt < 0) insertAt = history.length;
   history.splice(insertAt, 0, entry);
@@ -11361,10 +11335,10 @@ const validatePregameEvents = (candidate, { startDate, strict }) => {
       if (!parseIsoDate(date)) {
         return `$.events[${index}].date must be a real YYYY-MM-DD date.`;
       }
-      if (date >= startDate) {
+      if (compareGameDates(date, startDate) >= 0) {
         return `$.events[${index}].date must be strictly before the game start date ${startDate} — these events are pre-game history.`;
       }
-      if (previous && date < previous) {
+      if (previous && compareGameDates(date, previous) < 0) {
         return `$.events[${index}].date must not be earlier than the previous event — order the backstory chronologically.`;
       }
       previous = date;
@@ -11374,9 +11348,9 @@ const validatePregameEvents = (candidate, { startDate, strict }) => {
   candidate.events = events
     .filter((event) => {
       const date = normalizeString(event?.date);
-      return parseIsoDate(date) && date < startDate;
+      return parseIsoDate(date) && compareGameDates(date, startDate) < 0;
     })
-    .sort((a, b) => normalizeString(a.date).localeCompare(normalizeString(b.date)));
+    .sort((a, b) => compareGameDates(a.date, b.date));
   return "";
 };
 
@@ -11700,7 +11674,7 @@ const validatePregameCanonicalBootstrap = (
       return `$.canonicalUpdates storyline record ${index + 1} is resolved. The bootstrap persists only unresolved processes still alive at Round One.`;
     }
     const startedDate = normalizeString(storyline?.startedDate);
-    if (startedDate && parseIsoDate(startDate) && (!parseIsoDate(startedDate) || startedDate > startDate)) {
+    if (startedDate && parseIsoDate(startDate) && (!parseIsoDate(startedDate) || compareGameDates(startedDate, startDate) > 0)) {
       return `$.canonicalUpdates storyline record ${index + 1} date must be on or before the Round-One date ${startDate}.`;
     }
   }

@@ -1,3 +1,5 @@
+import { addGameDays, compareGameDates, diffGameDays, formatGameDate, gameDateDaysInMonth, parseGameDate, shiftGameYear } from "./gameDates.js";
+
 /*! Open Historia — portions (projects & operations board: derived status, sorting, filtering) © 2026 Nicholas Krol, MIT (see src/Editor/LICENSE). */
 // Everything the Projects & Operations board can work out for ITSELF, with no AI
 // turn involved.
@@ -34,18 +36,7 @@ const asText = (value) => String(value ?? "").trim();
 // Returns null for anything that is not a strict YYYY-MM-DD, which deliberately
 // includes the non-Gregorian dates some scenarios run on ("1200 BCE") — those get
 // no date-derived flags rather than nonsense ones.
-export const signedDaysBetween = (from, to) => {
-  const parse = (value) => {
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(asText(value));
-    if (!match) return null;
-    const time = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-    return Number.isFinite(time) ? time : null;
-  };
-  const a = parse(from);
-  const b = parse(to);
-  if (a === null || b === null) return null;
-  return Math.round((b - a) / 86400000);
-};
+export const signedDaysBetween = (from, to) => diffGameDays(from, to);
 
 // Statuses that are still running. Mirrors PROJECT_OPEN_STATUSES in gameState.js
 // — duplicated rather than imported ONLY to keep this module import-free (see the
@@ -69,7 +60,7 @@ export const deriveNextMilestone = (project) => {
   if (project?.nextMilestone && asText(project.nextMilestone.title)) return project.nextMilestone;
   const pending = asArray(project?.milestones).filter((entry) => entry?.status === "pending");
   if (pending.length === 0) return null;
-  const dated = pending.filter((entry) => asText(entry.date)).sort((a, b) => a.date.localeCompare(b.date));
+  const dated = pending.filter((entry) => asText(entry.date)).sort((a, b) => compareGameDates(a.date, b.date));
   const next = dated[0] || pending[0];
   return {
     title: asText(next.title),
@@ -153,24 +144,17 @@ export const normalizeMilestoneRepeat = (value) => {
   return REPEAT_ALIASES[raw] ?? "";
 };
 
-const parseYmd = (value) => {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(asText(value));
-  if (!match) return null;
-  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  return { year, month, day };
-};
-
-const pad = (n) => String(n).padStart(2, "0");
-const daysInMonth = (year, month) => new Date(Date.UTC(year, month, 0)).getUTCDate();
+// Any game date, BC included (runtime/gameDates.js).
+const parseYmd = (value) => parseGameDate(value);
 
 // Clamps the day into the target month, so an exercise on the 31st does not
-// vanish in February — it lands on the 28th (or 29th) and keeps its slot.
+// vanish in February — it lands on the 28th (or 29th) and keeps its slot. The
+// year carry steps over the missing year zero.
 const buildYmd = ({ year, month, day }) => {
   const carry = Math.floor((month - 1) / 12);
-  const normYear = year + carry;
+  const normYear = shiftGameYear(year, carry);
   const normMonth = ((month - 1) % 12 + 12) % 12 + 1;
-  return `${normYear}-${pad(normMonth)}-${pad(Math.min(day, daysInMonth(normYear, normMonth)))}`;
+  return formatGameDate({ year: normYear, month: normMonth, day: Math.min(day, gameDateDaysInMonth(normYear, normMonth)) });
 };
 
 // The next occurrence of a recurring date STRICTLY AFTER `notBefore`.
@@ -193,14 +177,11 @@ export const advanceRecurringDate = (date, repeat, notBefore = "") => {
   // keeps a nonsense date (year 0001) from spinning here forever.
   for (let guard = 0; guard < 600; guard += 1) {
     next = cadence === "weekly"
-      ? (() => {
-        const stepped = new Date(Date.UTC(next.year, next.month - 1, next.day + 7));
-        return { year: stepped.getUTCFullYear(), month: stepped.getUTCMonth() + 1, day: stepped.getUTCDate() };
-      })()
+      ? parseGameDate(addGameDays(formatGameDate(next), 7))
       : { year: next.year, month: next.month + REPEAT_MONTHS[cadence], day: start.day };
 
     const candidate = buildYmd(next);
-    if (!floorKey || candidate > floorKey) return candidate;
+    if (!floorKey || compareGameDates(candidate, floorKey) > 0) return candidate;
     // Re-seed from the normalised value so month overflow accumulates correctly.
     const reparsed = parseYmd(candidate);
     if (!reparsed) return candidate;

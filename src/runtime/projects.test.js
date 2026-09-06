@@ -63,13 +63,16 @@ test("signedDaysBetween keeps the sign, unlike daysBetweenDates", () => {
   assert.equal(signedDaysBetween("1963-01-01", "1963-01-01"), 0);
 });
 
-test("signedDaysBetween refuses anything that is not strict YYYY-MM-DD", () => {
-  // Deliberately non-Gregorian scenario dates must yield no flags rather than
-  // nonsense ones.
+test("signedDaysBetween refuses prose dates and reads any real day, BC included", () => {
+  // Prose scenario dates must yield no flags rather than nonsense ones.
   assert.equal(signedDaysBetween("1200 BCE", "1963-01-01"), null);
   assert.equal(signedDaysBetween("1963-01-01", "December 31, 1963"), null);
   assert.equal(signedDaysBetween("", "1963-01-01"), null);
-  assert.equal(signedDaysBetween("1963-1-1", "1963-01-01"), null);
+  // Spellings of one real day are read (runtime/gameDates.js), and a year
+  // before AD 1 is a negative year, so an ancient scenario gets its flags too.
+  assert.equal(signedDaysBetween("1963-1-1", "1963-01-01"), 0);
+  assert.equal(signedDaysBetween("-0218-03-01", "-0218-03-31"), 30);
+  assert.equal(signedDaysBetween("-0001-12-31", "0001-01-01"), 1);
 });
 
 test("deriveNextMilestone prefers the earliest dated pending milestone", () => {
