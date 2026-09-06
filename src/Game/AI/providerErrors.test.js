@@ -14,6 +14,11 @@ import {
   providerErrorReplyMessage,
   retryDelayMsFromPayload,
 } from "./providerErrors.js";
+import {
+    contextWindowMessage,
+    isContextWindowErrorPayload,
+    isContextWindowErrorText,
+} from "./providerErrors.js";
 
 // The frame that started this: an OpenAI-compatible gateway answering HTTP 200
 // and then refusing inside the stream. The advisor used to report it as "no
@@ -223,4 +228,34 @@ test("an ordinary answer is not mistaken for deliberation", () => {
 test("the insistence directive is blunt and names the failure", () => {
   assert.match(TOOL_CALL_INSISTENCE, /do not think out loud/i);
   assert.match(TOOL_CALL_INSISTENCE, /function call/i);
+});
+
+// A request that does not fit the model — as a gateway said it, in a 200 body,
+// for a jump on a 4096-token "foundation" model (a field report).
+test("a context-window refusal in a 200 body is recognised, a long real answer is not", () => {
+    assert.equal(isContextWindowErrorText("Context window exceeded Your conversation has 0 tokens but the maximum is 4096. Please start a new conversation or reduce the message length."), true);
+    assert.equal(isContextWindowErrorText("This model's maximum context length is 8192 tokens. However, you requested 21000 tokens."), true);
+    assert.equal(isContextWindowErrorText("Prompt is too long: 120000 tokens > 100000 maximum"), true);
+    assert.equal(isContextWindowErrorText(""), false);
+    assert.equal(isContextWindowErrorText('{"events":[{"date":"2016-01-05","title":"Trade talks"}]}'), false);
+    // A genuine answer that mentions context windows in passing is far longer than a refusal.
+    const essay = `${"The context window of a model is one constraint among many. ".repeat(20)}`;
+    assert.equal(essay.length > 600, true);
+    assert.equal(isContextWindowErrorText(essay), false);
+});
+
+test("a context-window error payload is recognised by code or by text, and a busy one is not", () => {
+    assert.equal(isContextWindowErrorPayload({ code: "context_length_exceeded", message: "..." }), true);
+    assert.equal(isContextWindowErrorPayload({ message: "This model's maximum context length is 4096 tokens." }), true);
+    assert.equal(isContextWindowErrorPayload("Input is too long for requested model."), true);
+    assert.equal(isContextWindowErrorPayload({ code: "overloaded_error", message: "Overloaded" }), false);
+    assert.equal(isContextWindowErrorPayload(null), false);
+});
+
+test("the context-window message names the provider, the refusal and the request size", () => {
+    const message = contextWindowMessage("My gateway", "Context window exceeded", 120000);
+    assert.match(message, /^My gateway cannot fit this request in the model's context window: it answered "Context window exceeded"\./);
+    assert.match(message, /about 30,000 tokens \(120,000 characters/);
+    assert.match(message, /32k tokens or more/);
+    assert.doesNotMatch(contextWindowMessage("X", "no", 0), /tokens \(/);
 });

@@ -20,6 +20,7 @@ const PROJECT_ROOT = path.join(__dirname, "..");
 const DIST_DIR = path.join(PROJECT_ROOT, "dist");
 const PUBLIC_DIR = path.join(PROJECT_ROOT, "public");
 import { DATA_DIR as SERVER_DATA_DIR } from "./dataDir.js";
+import { coarsenFeatureCollection } from "../src/runtime/coarseGeometry.js";
 const SCENARIOS_DIR = path.join(SERVER_DATA_DIR, "scenarios");
 const GAMES_DIR = path.join(SERVER_DATA_DIR, "games");
 const SCENARIO_MANIFEST_PATH = path.join(SERVER_DATA_DIR, "scenario-manifest.json");
@@ -2193,6 +2194,31 @@ const removeGameAsset = (gameId, assetKey) => {
   return getGameDetails(gameId);
 };
 
+// A coarse copy of the scenario's regions.geojson for anything that only shows
+// the map zoomed out — the country picker draws it at zoom 8 at most. The full
+// file is the stock world's 221 MB (2.6M vertices); the country picker used to
+// download and parse all of it, plus the 55 MB seed, for a map the size of a
+// card. Built once per upload — a size+mtime stamp invalidates it when the
+// regions are replaced — with the far tier's own coarsening, and kept beside
+// the upload as regions.coarse.geojson (a few MB). Never exported or cloned:
+// the bundle and the clone copy only the named asset files.
+const COARSE_REGIONS_FILE = "regions.coarse.geojson";
+const resolveScenarioCoarseRegionsAsset = (scenarioId) => {
+  const source = resolveScenarioUploadAsset(scenarioId, "regionsGeojson");
+  const stat = fs.statSync(source.sourcePath);
+  const stamp = `${stat.size}:${Math.round(stat.mtimeMs)}`;
+  const coarsePath = path.join(path.dirname(source.sourcePath), COARSE_REGIONS_FILE);
+  const stampPath = `${coarsePath}.stamp`;
+  const fresh = fs.existsSync(coarsePath) && fs.existsSync(stampPath)
+    && fs.readFileSync(stampPath, "utf-8") === stamp;
+  if (!fresh) {
+    const data = JSON.parse(fs.readFileSync(source.sourcePath, "utf-8"));
+    fs.writeFileSync(coarsePath, JSON.stringify(coarsenFeatureCollection(data)), "utf-8");
+    fs.writeFileSync(stampPath, stamp, "utf-8");
+  }
+  return { sourcePath: coarsePath, contentType: source.contentType };
+};
+
 const resolveScenarioUploadAsset = (scenarioId, assetKey) => {
   ensureScenarioStore();
 
@@ -3018,6 +3044,7 @@ export {
   removeGameAsset,
   removeScenarioAsset,
   resolveGameUploadAsset,
+  resolveScenarioCoarseRegionsAsset,
   resolveScenarioUploadAsset,
   resolveRuntimeBinaryAsset,
   setActiveGame,

@@ -1522,6 +1522,10 @@ const SpyView = ({ playerCountry, gameDate, countries, loadingCountries }) => {
     const foreign = foreignSpies(world, playerCountry);
     const history = normalizeSpies(world?.spies).filter((spy) => (!spy.owner || spy.owner === playerCountry) && spy.status === "exposed").slice(-3);
     const [storyDraft, setStoryDraft] = useState({}); // spy id -> cover story being typed
+    // Which agent's story was just saved: the Save button reads "Saved" for a
+    // moment. Without it a save changed nothing on screen — the field already
+    // showed what was typed — and read as a button that does nothing.
+    const [savedFlash, setSavedFlash] = useState("");
 
     const commitSpies = async (next) => {
         // Re-read at write time so a jump's world write is never clobbered with
@@ -1557,7 +1561,11 @@ const SpyView = ({ playerCountry, gameDate, countries, loadingCountries }) => {
     };
     const handleStory = async (spy) => {
         setError("");
-        try { await commitSpies(setCoverStory(world, spy.id, storyDraft[spy.id] ?? spy.coverStory)); } catch (err) { setError(err?.message || String(err)); }
+        try {
+            await commitSpies(setCoverStory(world, spy.id, storyDraft[spy.id] ?? spy.coverStory));
+            setSavedFlash(spy.id);
+            setTimeout(() => setSavedFlash((current) => (current === spy.id ? "" : current)), 1800);
+        } catch (err) { setError(err?.message || String(err)); }
     };
 
     const handleDeploy = async (selected) => {
@@ -1650,13 +1658,29 @@ const SpyView = ({ playerCountry, gameDate, countries, loadingCountries }) => {
             </div>
             </div>
             {spy.status === "discovered" && <button onClick={() => handleExpel(spy)} style={spyBtn(false)}>Expel</button>}
-            {spy.status === "discovered" && <button onClick={() => handleTurn(spy)} style={spyBtn(true)}>Turn</button>}
+            {spy.status === "discovered" && (
+                <button onClick={() => handleTurn(spy)} style={spyBtn(true)} title={storyOf(spy) ? "Turn this agent and plant the story below as what it reports home" : "Turn this agent into a double agent; you can plant a story afterwards"}>
+                    {storyOf(spy) ? "Turn & plant story" : "Turn"}
+                </button>
+            )}
             </div>
             {spy.status !== "exposed" && (
                 <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.4rem", alignItems: "center" }}>
-                <input value={storyOf(spy)} onChange={(e) => setStoryDraft((d) => ({ ...d, [spy.id]: e.target.value }))} placeholder={spy.status === "discovered" ? "Cover story to feed them if turned (optional)" : "What your double agent tells " + spy.owner}
+                <input value={storyOf(spy)} onChange={(e) => setStoryDraft((d) => ({ ...d, [spy.id]: e.target.value }))} onKeyDown={(e) => { if (e.key === "Enter" && spy.status === "turned") { e.preventDefault(); handleStory(spy); } }} placeholder={spy.status === "discovered" ? "Cover story to feed them if turned (optional)" : "What your double agent tells " + spy.owner}
                     style={inputStyle} />
-                {spy.status === "turned" && <button onClick={() => handleStory(spy)} style={spyBtn(true)}>Save</button>}
+                {spy.status === "turned" && (() => {
+                    // Nothing to save once the field matches what the agent already
+                    // reports; the button shows it rather than doing nothing.
+                    const unchanged = storyOf(spy) === spy.coverStory;
+                    const justSaved = savedFlash === spy.id;
+                    return (
+                        <button onClick={() => handleStory(spy)} disabled={unchanged && !justSaved}
+                            style={{ ...spyBtn(true), ...(unchanged && !justSaved ? { opacity: 0.45, cursor: "default" } : {}) }}
+                            title={justSaved ? "Saved — this is what the agent now reports home" : unchanged ? "The agent already reports this story" : "Save the story the agent reports home (Enter does the same)"}>
+                            {justSaved ? "Saved ✓" : "Save"}
+                        </button>
+                    );
+                })()}
                 </div>
             )}
             </div>

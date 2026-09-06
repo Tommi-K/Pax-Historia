@@ -233,3 +233,48 @@ export const isStreamingRequired = (message) => {
     if (!text || !/stream/i.test(text)) return false;
     return STREAM_REQUIRED_TEXT.test(text);
 };
+
+// ---------------------------------------------------------------------------
+// The request does not fit the model's context window
+// ---------------------------------------------------------------------------
+//
+// A gateway can say so as a 400 with a code — or, some do, as a perfectly
+// normal 200 whose "answer" is the sentence: "Context window exceeded. Your
+// conversation has 0 tokens but the maximum is 4096." That used to reach the
+// player as "Response did not contain parseable JSON", which sent them hunting
+// for a parsing bug in a model that was never asked anything it could answer.
+// No retry can help: the retry carries the failed answer too, so it is longer.
+const CONTEXT_WINDOW_CODES = new Set([
+    "context_length_exceeded", "context_window_exceeded", "max_tokens_exceeded",
+    "prompt_too_long", "invalid_prompt_length", "input_too_long",
+]);
+const CONTEXT_WINDOW_TEXT = /context[ _-]?(?:window|length|size)|maximum context|too many tokens|token limit|prompt is too long|input is too long|reduce the (?:message|prompt|input) length|exceeds? (?:the )?(?:model'?s )?(?:maximum )?(?:number of )?(?:input )?tokens|(?:maximum|max) (?:input|prompt) (?:length|tokens|size)/i;
+
+export const isContextWindowErrorPayload = (error) => {
+    if (!error) return false;
+    if (typeof error === "object") {
+        for (const key of ["code", "type"]) {
+            const value = String(error[key] ?? "").toLowerCase();
+            if (value && CONTEXT_WINDOW_CODES.has(value)) return true;
+        }
+    }
+    return CONTEXT_WINDOW_TEXT.test(errorHaystack(error));
+};
+
+// A 200 whose text IS the refusal rather than an answer. Short on purpose: a
+// real answer that happens to discuss context windows is thousands of
+// characters long.
+export const isContextWindowErrorText = (text) => {
+    const value = String(text ?? "").trim();
+    return value.length > 0 && value.length <= 600 && CONTEXT_WINDOW_TEXT.test(value);
+};
+
+// What the player reads instead of "did not contain parseable JSON".
+export const contextWindowMessage = (providerLabel, detail, requestChars = 0) => {
+    const chars = Math.max(0, Math.round(Number(requestChars) || 0));
+    const size = chars
+        ? ` This request was about ${Math.round(chars / 4).toLocaleString()} tokens (${chars.toLocaleString()} characters of prompt and history).`
+        : "";
+    return `${providerLabel} cannot fit this request in the model's context window: it answered "${String(detail ?? "").trim()}".${size} `
+        + "A turn needs a model with a large context window (32k tokens or more): pick one in Settings → AI, or a provider that offers one.";
+};

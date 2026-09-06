@@ -25,15 +25,18 @@ import { isBetaUnits } from "../../runtime/mapSettings.js";
 import { normalizePromptPack } from "./gameplayPrompts.js";
 import {
     busyProviderMessage,
+    contextWindowMessage,
     errorPayloadText,
     isBusyErrorPayload,
+    isContextWindowErrorPayload,
+    isContextWindowErrorText,
     isQuotaExhaustedPayload,
-    TOOL_CALL_INSISTENCE,
     isStreamingRefusal,
     isStreamingRequired,
     looksLikeDeliberation,
     providerErrorReplyMessage,
     retryDelayMsFromPayload,
+    TOOL_CALL_INSISTENCE,
 } from "./providerErrors.js";
 import { ANSWER_SENTINEL_DIRECTIVE } from "./jsonSalvage.js";
 import { createModeObserver, nextStructuredMode, startingStructuredMode } from "./structuredMode.js";
@@ -908,6 +911,12 @@ async function callOpenAIStyleChatCompletions({
     // down from here — a setting is a starting point, never a lock.
     const startedStructuredMode = startingStructuredMode(configuredStructuredMode);
     let structuredMode = tool ? startedStructuredMode : "text";
+    // How much this request carries, for the context-window message below:
+    // the number the player needs to compare against the model's limit.
+    const requestChars = String(systemPrompt ?? "").length + (Array.isArray(history) ? history : []).reduce((total, message) => {
+        const parts = Array.isArray(message?.parts) ? message.parts : [];
+        return total + (parts.length ? parts.reduce((sum, part) => sum + String(part?.text ?? "").length, 0) : String(message?.content ?? "").length);
+    }, 0);
     let disableToolReasoning = false;
     // Set once the model has proved it needs more room than the caller asked for
     // (see the all-reasoning retry below). Lifting the cap entirely hands the
@@ -1094,7 +1103,13 @@ async function callOpenAIStyleChatCompletions({
 
         if (!response.ok) {
             const payload = await readErrorPayload(response);
-            throw new Error(extractErrorMessage(payload, `${providerLabel} request failed (${response.status})`));
+            const detail = extractErrorMessage(payload, `${providerLabel} request failed (${response.status})`);
+            // Too big for the model: say so, with the size, and do not let it be
+            // mistaken for a busy provider or a broken answer.
+            if (isContextWindowErrorPayload(payload?.error ?? payload)) {
+                throw new Error(contextWindowMessage(providerLabel, detail, requestChars));
+            }
+            throw new Error(detail);
         }
 
         // Advisor/chat streaming: forward tokens to the UI as they arrive. Guard
@@ -1154,6 +1169,14 @@ async function callOpenAIStyleChatCompletions({
             : await response.json();
         onUsage?.(data);
         const text = extractOpenAIMessageText(data);
+
+        // Some gateways put "the request does not fit the context window" in a
+        // 200 body as if it were the answer. It is not one, and no retry can help
+        // (the retry carries the failed answer too), so say what happened rather
+        // than letting it fail downstream as "did not contain parseable JSON".
+        if (isContextWindowErrorText(text) || isContextWindowErrorPayload(data?.error)) {
+            throw new Error(contextWindowMessage(providerLabel, text || errorPayloadText(data?.error), requestChars));
+        }
 
         if (tool) {
             const toolInput = structuredMode === "tool" ? extractOpenAIToolInput(data, tool) : null;
