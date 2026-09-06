@@ -572,8 +572,8 @@ app.put("/api/scenarios/:scenarioId", jsonParser, (req, res) => {
 
 app.get("/api/scenarios/:scenarioId/export", (req, res) => {
   try {
-    const mode = req.query?.mode === "full" ? "full" : "light";
-    res.json(exportScenarioBundle(req.params.scenarioId, { mode }));
+    // Always the whole scenario; the old ?mode=light is accepted and ignored.
+    res.json(exportScenarioBundle(req.params.scenarioId));
   } catch (error) {
     sendError(res, 400, error);
   }

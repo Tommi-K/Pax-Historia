@@ -174,6 +174,9 @@ const STOCK_COUNTRY_NAMES = new Set(Object.values(COUNTRY_NAMES));
 export const buildGameSeed = (doc, regionsFC, palette = {}, { playerCountry } = {}) => {
   const regionOwnershipOverrides = {};
   const owners = new Set();
+  // Polities that are on the map only as claimants: a region is disputed in
+  // their name and renders striped in their colour, so the game must know them.
+  const claimants = new Set();
   let customCount = 0;
 
   for (const f of regionsFC?.features || []) {
@@ -185,6 +188,10 @@ export const buildGameSeed = (doc, regionsFC, palette = {}, { playerCountry } = 
     if (owner) {
       regionOwnershipOverrides[id] = owner;
       owners.add(owner);
+    }
+    for (const claimant of Array.isArray(props.claimants) ? props.claimants : []) {
+      const key = String(claimant || "").trim();
+      if (key) claimants.add(key);
     }
   }
 
@@ -237,11 +244,14 @@ export const buildGameSeed = (doc, regionsFC, palette = {}, { playerCountry } = 
   };
 
   for (const owner of owners) emitPolity(owner, declaredPolities[owner]);
-  // Landless governments/exiles and other explicit scenario actors have no region
-  // to discover them from, so the document registry must be included independently.
-  for (const [key, record] of Object.entries(declaredPolities)) {
-    if (!owners.has(key)) emitPolity(key, record);
-  }
+  for (const key of claimants) if (!owners.has(key)) emitPolity(key, declaredPolities[key]);
+  // Nothing else. The registry holds metadata FOR the map's polities (a display
+  // name, aliases, lore); it does not conjure a polity the map cannot show.
+  // Declared-but-landless records used to be emitted here as "governments in
+  // exile", and that is how an empire an author had painted off the map kept
+  // its polity record, stayed in the model's roster and wrote to the player.
+  // A polity exists on the map or not at all: paint it back and its record
+  // returns with it (the editor keeps the metadata for the session).
 
   const author = (doc.metadata?.author || "").trim();
   const gameCities = buildCitiesForGame(doc.features);

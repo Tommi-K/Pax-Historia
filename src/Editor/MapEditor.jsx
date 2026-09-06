@@ -218,9 +218,9 @@ const MapEditor = ({ onClose, scenarioName, onApplyToScenario, initialMap } = {}
     colorOverrides: d.colorOverrides,
     flags: d.flags,
     tags: d.tags,
-    // Scenario Workshop: explicit polity registry keyed by stable identity. This
-    // preserves landless polities and allows display-name changes without re-owning
-    // every region.
+    // Scenario Workshop: polity metadata keyed by stable identity, for the
+    // polities the map has (pruned to them as the map changes). Display names
+    // change here without re-owning every region.
     polities: d.polities,
     // Without this the marker never persists, so a document migrates on every open,
     // forever — and, far worse, a document saved after being migrated still reads
@@ -469,6 +469,38 @@ const MapEditor = ({ onClose, scenarioName, onApplyToScenario, initialMap } = {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [api, d.types, d.selection, d.regionCount],
   );
+
+  // The polity registry is the map's. A polity exists because a region is
+  // owned by it or disputed in its name; the registry only carries metadata for
+  // those keys. A key that leaves the map leaves the registry — its record is
+  // kept for the session, so painting it back restores the name, aliases and
+  // lore — and a scenario cannot ship a polity nobody can find on the map,
+  // which is how an empire painted off the map kept writing to the player.
+  // Nothing is pruned before the map has loaded: an empty usage list then means
+  // "not here yet", not "no polities".
+  const retiredPolitiesRef = useRef(new Map());
+  useEffect(() => {
+    if (!api?.listPolityUsage) return;
+    const onMap = new Set((api.listPolityUsage() || []).map((row) => row.key));
+    if (!onMap.size && !d.regionCount) return;
+    const registry = d.polities || {};
+    const gone = Object.keys(registry).filter((key) => !onMap.has(key));
+    const back = [...onMap].filter((key) => !registry[key] && retiredPolitiesRef.current.has(key));
+    if (!gone.length && !back.length) return;
+    d.setPolities((prev) => {
+      const next = { ...(prev || {}) };
+      for (const key of gone) {
+        retiredPolitiesRef.current.set(key, next[key]);
+        delete next[key];
+      }
+      for (const key of back) {
+        next[key] = retiredPolitiesRef.current.get(key);
+        retiredPolitiesRef.current.delete(key);
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, d.polities, d.regionCount, regionEpoch]);
 
   const polityCount = useMemo(() => {
     const keys = new Set(Object.keys(d.polities || {}));

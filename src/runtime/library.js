@@ -426,8 +426,10 @@ export const clearGameAsset = async (gameId, assetKey) => {
   return details;
 };
 
-export const exportScenarioBundle = async (scenarioId, mode = "light") =>
-  requestJson(`${SCENARIOS_API_ROOT}/${encodeURIComponent(scenarioId)}/export?mode=${encodeURIComponent(mode)}`);
+// Always the whole scenario: geometry, cities, basemap, flags, colours, tags
+// and any custom tile archive. There is no light export.
+export const exportScenarioBundle = async (scenarioId) =>
+  requestJson(`${SCENARIOS_API_ROOT}/${encodeURIComponent(scenarioId)}/export`);
 
 export const importScenarioBundle = async (bundle) => {
   const details = await requestJson(`${SCENARIOS_API_ROOT}/import`, {

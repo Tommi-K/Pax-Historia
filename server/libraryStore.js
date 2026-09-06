@@ -2719,7 +2719,7 @@ const resolveRuntimeBinaryAsset = (assetKey) => {
 
 const encodeBinaryFile = (sourcePath) => fs.readFileSync(sourcePath).toString("base64");
 
-const buildScenarioBundleAsset = (scenarioId, assetKey, mode) => {
+const buildScenarioBundleAsset = (scenarioId, assetKey) => {
   if (assetKey === COVER_IMAGE_ASSET_KEY) {
     const uploadPath = getScenarioUploadPath(scenarioId, assetKey);
     if (!fs.existsSync(uploadPath)) {
@@ -2754,8 +2754,8 @@ const buildScenarioBundleAsset = (scenarioId, assetKey, mode) => {
     };
   }
 
-  // Custom region geometry IS the map, so always embed it (even in "light"
-  // mode) — a shared custom map is broken without its geometry.
+  // Custom region geometry IS the map, so always embed it — a shared custom
+  // map is broken without its geometry.
   if (Object.hasOwn(SCENARIO_GEOJSON_ASSET_FILES, assetKey)) {
     const geojsonPath = getScenarioUploadPath(scenarioId, assetKey);
     if (!fs.existsSync(geojsonPath)) {
@@ -2771,10 +2771,12 @@ const buildScenarioBundleAsset = (scenarioId, assetKey, mode) => {
     };
   }
 
+  // Every export is full: a custom tile archive travels with the scenario
+  // like the geometry does. There is no light mode any more — a bundle that
+  // silently dropped part of the map was shared as if it were the whole map.
   const uploadPath = getScenarioUploadPath(scenarioId, assetKey);
-  if (!fs.existsSync(uploadPath) || mode !== "full") {
+  if (!fs.existsSync(uploadPath)) {
     return {
-      droppedOverride: fs.existsSync(uploadPath) && mode !== "full",
       fileName: PMTILES_ASSET_FILES[assetKey],
       mode: "default",
     };
@@ -2789,30 +2791,30 @@ const buildScenarioBundleAsset = (scenarioId, assetKey, mode) => {
   };
 };
 
-const exportScenarioBundle = (scenarioId, { mode = "light" } = {}) => {
+const exportScenarioBundle = (scenarioId) => {
   const summary = getScenarioSummary(scenarioId);
   const details = getScenarioDetails(scenarioId);
 
   return {
     assets: {
-      cover: buildScenarioBundleAsset(scenarioId, "cover", mode),
-      cities: buildScenarioBundleAsset(scenarioId, "cities", mode),
-      colors: buildScenarioBundleAsset(scenarioId, "colors", mode),
+      cover: buildScenarioBundleAsset(scenarioId, "cover"),
+      cities: buildScenarioBundleAsset(scenarioId, "cities"),
+      colors: buildScenarioBundleAsset(scenarioId, "colors"),
       // Author-set flags travel with the scenario for the same reason the colours
       // and the background do: a shared map that loses them looks broken, and the
       // whole point of setting one is that other people see it.
-      flags: buildScenarioBundleAsset(scenarioId, "flags", mode),
+      flags: buildScenarioBundleAsset(scenarioId, "flags"),
       // Tags travel with the scenario for the same reason: they are the map-maker's
       // characterisation of every country and the model reads them as context, so a
       // shared map that loses them plays differently than its author intended.
-      tags: buildScenarioBundleAsset(scenarioId, "tags", mode),
-      countries: buildScenarioBundleAsset(scenarioId, "countries", mode),
-      regions: buildScenarioBundleAsset(scenarioId, "regions", mode),
-      regionsGeojson: buildScenarioBundleAsset(scenarioId, "regionsGeojson", mode),
-      citiesGeojson: buildScenarioBundleAsset(scenarioId, "citiesGeojson", mode),
+      tags: buildScenarioBundleAsset(scenarioId, "tags"),
+      countries: buildScenarioBundleAsset(scenarioId, "countries"),
+      regions: buildScenarioBundleAsset(scenarioId, "regions"),
+      regionsGeojson: buildScenarioBundleAsset(scenarioId, "regionsGeojson"),
+      citiesGeojson: buildScenarioBundleAsset(scenarioId, "citiesGeojson"),
       // The custom map background travels with the scenario (always embedded, like
       // the geometry) so a shared/imported custom map isn't blank.
-      backgroundData: buildScenarioBundleAsset(scenarioId, "backgroundData", mode),
+      backgroundData: buildScenarioBundleAsset(scenarioId, "backgroundData"),
     },
     data: {
       actions: cloneJson(details.data.actions),
@@ -2824,7 +2826,7 @@ const exportScenarioBundle = (scenarioId, { mode = "light" } = {}) => {
       world: cloneJson(details.data.world),
     },
     exportedAt: new Date().toISOString(),
-    mode: mode === "full" ? "full" : "light",
+    mode: "full",
     scenario: {
       accentColor: summary.accentColor,
       countryNameOverrides: cloneJson(summary.countryNameOverrides),
