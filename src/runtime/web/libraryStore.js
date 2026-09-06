@@ -1030,11 +1030,12 @@ const removeGameAsset = async (id, key) => {
 };
 
 // --- Export / import ------------------------------------------------------
-const exportScenarioBundle = async (id, mode = "light") => {
+// Every export is full: custom tile archives travel with the scenario like
+// the geometry does. There is no light mode any more.
+const exportScenarioBundle = async (id) => {
   const record = await getScenario(id);
   if (!record) throw new Error(`Scenario not found: ${id}`);
   const meta = readScenarioMeta(id, record.meta ?? {});
-  const full = mode === "full";
   const data = {};
   for (const key of JSON_ASSET_KEYS) data[key] = cloneJson(jsonAsset(record, key));
 
@@ -1051,13 +1052,12 @@ const exportScenarioBundle = async (id, mode = "light") => {
       : { fileName, mode: "default" };
   }
   for (const [key, fileName] of [["cities", "cities.pmtiles"], ["countries", "countries.pmtiles"], ["regions", "regions.pmtiles"]]) {
-    const present = record.pmtiles?.[key] !== undefined;
-    assets[key] = present && full
+    assets[key] = record.pmtiles?.[key] !== undefined
       ? { contentType: "application/octet-stream", data: bytesToBase64(record.pmtiles[key]), encoding: "base64", fileName, mode: "embedded" }
-      : { droppedOverride: present, fileName, mode: "default" };
+      : { fileName, mode: "default" };
   }
   return {
-    schema: SCENARIO_BUNDLE_SCHEMA, version: SCENARIO_BUNDLE_VERSION, mode: full ? "full" : "light", exportedAt: nowIso(),
+    schema: SCENARIO_BUNDLE_SCHEMA, version: SCENARIO_BUNDLE_VERSION, mode: "full", exportedAt: nowIso(),
     scenario: { accentColor: meta.accentColor, countryNameOverrides: meta.countryNameOverrides, description: meta.description,
       eyebrow: meta.eyebrow, heroSubtitle: meta.heroSubtitle, heroTitle: meta.heroTitle, id: meta.id, name: meta.name, subtitle: meta.subtitle },
     data, assets,
@@ -1240,7 +1240,7 @@ export const handleScenarios = async ({ method, segments, body, rawBody, content
       return null;
     }
     if (sub === "import" && method === "PUT") return jsonResponse(await updateScenarioFromBundle(id, body ?? {}));
-    if (sub === "export" && method === "GET") return jsonResponse(await exportScenarioBundle(id, query?.get("mode") || "light"));
+    if (sub === "export" && method === "GET") return jsonResponse(await exportScenarioBundle(id));
     if (sub === "assets" && segments[2]) {
       const key = decodeURIComponent(segments[2]);
       if (method === "GET") { const record = await getScenario(id); if (!record) throw new Error(`Scenario not found: ${id}`); return scenarioAssetResponse(record, key, rangeHeader); }

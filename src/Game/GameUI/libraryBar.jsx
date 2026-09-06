@@ -1015,10 +1015,10 @@ const EditorDrawer = ({
             Download the scenario as one self-contained file — custom map geometry, cities and basemap all travel with it, ready to share or re-import. The <strong>.zip</strong> carries a custom basemap as a real image file (smaller, and the form the community hub expects); the <strong>JSON</strong> packs everything into one text file.
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "0.55rem" }}>
-            <button onClick={() => onExportBundle("light", "zip")} style={actionButtonStyle} type="button">
+            <button onClick={() => onExportBundle("zip")} style={actionButtonStyle} type="button">
               Download .zip
             </button>
-            <button onClick={() => onExportBundle("light", "json")} style={actionButtonStyle} type="button">
+            <button onClick={() => onExportBundle("json")} style={actionButtonStyle} type="button">
               Download JSON
             </button>
           </div>
@@ -1660,7 +1660,7 @@ const LibraryTopBar = () => {
     }
   };
 
-  const handleExportBundle = async (mode, format = "json") => {
+  const handleExportBundle = async (format = "json") => {
     if (editorKind !== "scenario" || !editorDetails) {
       return;
     }
@@ -1670,7 +1670,7 @@ const LibraryTopBar = () => {
 
     try {
       const id = editorDetails.scenario.id;
-      const bundle = await exportScenarioBundle(id, mode);
+      const bundle = await exportScenarioBundle(id);
       if (format === "zip") {
         // Package the scenario as a real .zip. When it carries a custom basemap, that
         // image/geojson rides inside as an actual file (+ a small preview) instead of a
@@ -1687,7 +1687,7 @@ const LibraryTopBar = () => {
         }
         saveBlobToDisk(await zipBundle(files), `${id}-scenario.zip`);
       } else {
-        saveJsonBundleToDisk(bundle, `${id}-${mode}.json`);
+        saveJsonBundleToDisk(bundle, `${id}-scenario.json`);
       }
     } catch (nextError) {
       setEditorError(nextError.message);

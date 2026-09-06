@@ -646,7 +646,7 @@ const CommunityPanel = ({ fullPage = false, onImported }) => {
     setPublishPickerOpen(false);
     setError(null);
     try {
-      const bundle = await exportScenarioBundle(scenario.id, "light");
+      const bundle = await exportScenarioBundle(scenario.id);
       // If this scenario's custom basemap is already on the community hub,
       // reference it instead of re-embedding the whole image (smaller bundle).
       const dedup = await dedupeScenarioBundleBackground(bundle).catch(() => ({ referenced: false, needsPublish: false }));

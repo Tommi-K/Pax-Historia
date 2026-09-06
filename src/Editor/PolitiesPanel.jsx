@@ -140,10 +140,39 @@ const PolitiesPanel = ({
     }
     upsertPolity?.(key, { name, code: key, aliases: [name], status: "active", note: "" });
     if (selection.length) api?.setRegionAttrs?.(selection, { owner: key });
+    // A polity exists on the map or not at all: with nothing selected the new
+    // one goes straight to the paint tool so it gets its first region now.
+    else onPaintPolity?.(key);
     setRefreshNonce((n) => n + 1);
     setSelectedKey(key);
     setNewKey("");
     setNewName("");
+  };
+
+  // Removing a polity is a map operation: its regions become unowned, the
+  // claims in its name are dropped, and the record (with its colour, flag and
+  // tags) goes with them. Deleting only the record used to leave the regions
+  // keyed to it, so the polity came straight back.
+  const removeFromMap = () => {
+    if (!current?.key) return;
+    const key = current.key;
+    const owned = api?.selectOwner?.(key, { zoom: false }) || [];
+    const disputed = (api?.serializeRegions?.()?.features || []).filter((feature) =>
+      Array.isArray(feature?.properties?.claimants) && feature.properties.claimants.includes(key));
+    const summary = [
+      owned.length ? `${owned.length} region(s) become unowned` : "",
+      disputed.length ? `${disputed.length} claim(s) are dropped` : "",
+    ].filter(Boolean).join(" and ");
+    if (!window.confirm(`Remove “${current.name}” from the map?${summary ? ` ${summary};` : ""} its colour, flag and tags go with it.`)) return;
+    if (owned.length) api?.setRegionAttrs?.(owned, { owner: null });
+    for (const feature of disputed) {
+      const id = String(feature?.properties?.id ?? feature?.id ?? "");
+      if (!id) continue;
+      api?.setRegionAttrs?.([id], { claimants: feature.properties.claimants.filter((claimant) => claimant !== key) });
+    }
+    removePolity?.(key);
+    setSelectedKey("");
+    setRefreshNonce((n) => n + 1);
   };
 
   const assignSelection = () => {
@@ -309,14 +338,10 @@ const PolitiesPanel = ({
     );
   };
 
-  const canDeleteRecord = Boolean(
-    current?.record && current.regionCount === 0 && current.claimantCount === 0,
-  );
-
   return (
     <Panel title="Polities" icon="list" onClose={onClose} width={390}>
       <div style={{ fontSize: 12, lineHeight: 1.45, color: "rgba(255,255,255,0.62)" }}>
-        Regions store a <b>stable polity key</b>. Rename the polity here to change its visible identity without creating a new one-province country.
+        Every polity here is on the map — it owns a region or a region is disputed in its name — and it leaves this list when its last region does. Regions store a <b>stable polity key</b>: rename the polity here to change its visible identity without creating a new one-province country.
       </div>
 
       <input
@@ -453,22 +478,14 @@ const PolitiesPanel = ({
             </div>
           )}
 
-          {current.record && (
-            <button
-              type="button"
-              style={{ ...pillButton(false), color: canDeleteRecord ? "#f87171" : "rgba(255,255,255,0.35)" }}
-              disabled={!canDeleteRecord}
-              title={canDeleteRecord ? "Delete this landless polity record" : "Transfer/clear its territory and claims before deleting the polity record"}
-              onClick={() => {
-                if (!canDeleteRecord) return;
-                if (!window.confirm(`Delete the polity record “${current.name}”?`)) return;
-                removePolity?.(current.key);
-                setSelectedKey("");
-              }}
-            >
-              Delete polity record
-            </button>
-          )}
+          <button
+            type="button"
+            style={{ ...pillButton(false), color: "#f87171" }}
+            title="Make its regions unowned, drop the claims in its name, and remove the polity with its colour, flag and tags"
+            onClick={removeFromMap}
+          >
+            Remove from the map
+          </button>
         </div>
       )}
 
@@ -533,7 +550,7 @@ const PolitiesPanel = ({
           <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Display name, e.g. Austria-Hungary" style={inputStyle} />
           <input value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="Stable key (optional; defaults to display name)" style={inputStyle} />
           <button type="button" style={pillButton(false)} disabled={!clean(newName || newKey)} onClick={createPolity}>
-            {selection.length ? `Create + assign ${selection.length} selected regions` : "Create landless polity"}
+            {selection.length ? `Create + assign ${selection.length} selected regions` : "Create + paint it onto the map"}
           </button>
         </div>
       </div>
