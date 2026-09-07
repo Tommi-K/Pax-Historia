@@ -1271,28 +1271,52 @@ const forkBuiltInScenarioForExistingGames = (gameIds, ownRegionsPath) => {
   return forkId;
 };
 
-// Once per process: the packaged seed cannot change while the server runs, and
-// ensure* runs on the read path (every poll), so the stamp is compared once.
+const seedRegionsBytes = () => {
+  try {
+    return fs.statSync(path.join(BUILT_IN_SEED_DIR, "regions.geojson")).size;
+  } catch {
+    return null;
+  }
+};
+
+// Once per process while the copy stays whole: the packaged seed cannot change
+// while the server runs, and ensure* runs on the read path (every poll), so the
+// stamp is compared once. A copy that loses its world.json underneath a running
+// server — a source checkout's `git pull` deleting the files that used to be
+// tracked under server/data — is completed again rather than served empty.
 let builtInScenarioSynced = false;
 const syncBuiltInScenarioFromSeed = () => {
-  if (builtInScenarioSynced) return;
+  const worldPath = getScenarioJsonPath(DEFAULT_SCENARIO_ID, "world");
+  if (builtInScenarioSynced && fs.existsSync(worldPath)) return;
   const stamp = readBuiltInSeedStamp();
   if (!stamp) {
     builtInScenarioSynced = true; // a tree without the seed: nothing to sync
     return;
   }
   const scenarioDir = getScenarioDirectory(DEFAULT_SCENARIO_ID);
-  const firstRun =
-    !fs.existsSync(getScenarioMetaPath(DEFAULT_SCENARIO_ID)) &&
-    !fs.existsSync(getScenarioJsonPath(DEFAULT_SCENARIO_ID, "world"));
-  if (firstRun) {
-    seedBuiltInScenarioFiles(stamp);
-    builtInScenarioSynced = true;
-    console.warn(`[built-in scenario] seeded Modern Day (${stamp}) into ${scenarioDir}`);
-    return;
-  }
   if (readInstalledBuiltInStamp() === stamp) {
     builtInScenarioSynced = true;
+    return;
+  }
+
+  // What the install's built-in holds as its map decides the path. Nothing, or
+  // the seed's own file: seed (or complete) the copy in place. Anything else is
+  // an older map — the stock world, or one the player uploaded — which the
+  // campaigns started on it keep in a fork before the built-in is reseeded.
+  const regionsPath = getScenarioUploadPath(DEFAULT_SCENARIO_ID, "regionsGeojson");
+  const regionsBytes = fs.existsSync(regionsPath) ? fs.statSync(regionsPath).size : null;
+  const holdsSeedMap = regionsBytes !== null && regionsBytes === seedRegionsBytes();
+  const hasRecord = fs.existsSync(worldPath) || fs.existsSync(getScenarioMetaPath(DEFAULT_SCENARIO_ID));
+  const firstRun = !hasRecord && regionsBytes === null;
+  const completing = holdsSeedMap && !fs.existsSync(worldPath);
+  if (firstRun || completing) {
+    seedBuiltInScenarioFiles(stamp);
+    builtInScenarioSynced = true;
+    console.warn(
+      completing
+        ? `[built-in scenario] completed Modern Day (${stamp}): its record was missing beside the map`
+        : `[built-in scenario] seeded Modern Day (${stamp}) into ${scenarioDir}`,
+    );
     return;
   }
 

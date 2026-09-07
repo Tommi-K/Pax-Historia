@@ -228,3 +228,69 @@ test("a scenario without a map of its own renders on the stock world, never on t
   assert.equal(path.resolve(result.presetSource), path.resolve(path.join(root, "stock", "regions.geojson")));
   assert.equal(path.resolve(result.builtInSource), path.resolve(path.join(root, "scenarios", "default", "regions.geojson")));
 });
+
+test("a built-in that already holds the seed's map but lost its record is completed in place, not forked", () => {
+  const root = freshRoot();
+  const dir = path.join(root, "scenarios", "default");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "regions.geojson"), readFileSync(path.join(SEED_DIR, "regions.geojson")));
+  // What ensureDefaultScenario writes when it finds no meta: a bare, untouched one.
+  const createdAt = "2026-09-07T12:00:00.000Z";
+  writeJson(path.join(dir, "scenario.json"), { id: "default", name: "Modern Day", createdAt, updatedAt: createdAt });
+  writeJson(path.join(root, "scenario-manifest.json"), { order: ["default"], selectedScenarioId: "default", version: 2 });
+  const gameDir = path.join(root, "games", "new-campaign");
+  writeJson(path.join(gameDir, "game-instance.json"), { id: "new-campaign", name: "new", scenarioId: "default", createdAt, updatedAt: createdAt });
+  writeJson(path.join(gameDir, "world.json"), { ownerSchema: OWNER_SCHEMA, builtInMap: STAMP, regionOwnershipOverrides: { 0: "United States of America" } });
+  writeJson(path.join(gameDir, "game.json"), { country: "United States of America", gameDate: "2016-02-01" });
+  writeJson(path.join(root, "game-manifest.json"), { activeGameId: "new-campaign", order: ["new-campaign"], version: 2 });
+
+  const result = runStore(root, `store.ensureScenarioStore(); ${report("{ catalog: store.getScenarioCatalog().scenarios.map((s) => s.id), world: store.getScenarioDetails('default').data.world }")}`);
+  assert.deepEqual(result.catalog, ["default"], "no classic fork: the map was already the seed's");
+  assert.equal(result.world.builtInMap, STAMP);
+  assert.equal(result.world.customRegions, true);
+  assert.ok(result.world.ownerCodes.length > 100, "the world came back with its owners");
+  assert.equal(readJson(path.join(gameDir, "game-instance.json")).scenarioId, "default", "the campaign stays on the built-in");
+  assert.ok(existsSync(path.join(dir, "colors.json")));
+  assert.equal(readJson(path.join(dir, "cities.geojson")).features.length, readJson(path.join(SEED_DIR, "cities.geojson")).features.length);
+});
+
+test("a packaged install from before the redraw — meta and the stock map, no world.json — keeps its campaign on the stock world", () => {
+  const root = freshRoot();
+  const dir = path.join(root, "scenarios", "default");
+  const createdAt = "2026-08-01T00:00:00.000Z";
+  writeJson(path.join(dir, "scenario.json"), { id: "default", name: "Modern Day", createdAt, updatedAt: createdAt });
+  writeJson(path.join(dir, "game.json"), { country: "Russia", startDate: "2016-01-01", gameDate: "2016-01-01" });
+  writeStockSized(path.join(dir, "regions.geojson"));
+  writeJson(path.join(root, "scenario-manifest.json"), { order: ["default"], selectedScenarioId: "default", version: 2 });
+  const gameDir = path.join(root, "games", "desktop-campaign");
+  writeJson(path.join(gameDir, "game-instance.json"), { id: "desktop-campaign", name: "desktop", scenarioId: "default", createdAt, updatedAt: createdAt });
+  writeJson(path.join(gameDir, "world.json"), { ownerSchema: OWNER_SCHEMA, regionOwnershipOverrides: { "RUS.3_1": "Russia" } });
+  writeJson(path.join(gameDir, "game.json"), { country: "Russia", gameDate: "2016-04-01" });
+  writeJson(path.join(root, "game-manifest.json"), { activeGameId: "desktop-campaign", order: ["desktop-campaign"], version: 2 });
+
+  const result = runStore(root, `
+    store.ensureScenarioStore();
+    const runtime = store.readRuntimeJsonAsset("regionsGeojson");
+    ${report("{ catalog: store.getScenarioCatalog().scenarios.map((s) => s.id), runtimeSource: runtime.sourcePath }")}
+  `);
+  assert.deepEqual([...result.catalog].sort(), ["default", "modern-day-classic"]);
+  assert.equal(readJson(path.join(gameDir, "game-instance.json")).scenarioId, "modern-day-classic");
+  assert.equal(path.resolve(result.runtimeSource), path.resolve(path.join(root, "stock", "regions.geojson")));
+  assert.equal(readJson(path.join(dir, "world.json")).builtInMap, STAMP);
+});
+
+test("a running server whose built-in loses its record completes it on the next read", () => {
+  const root = freshRoot();
+  const result = runStore(root, `
+    store.ensureScenarioStore();
+    const fs = await import("node:fs");
+    const dir = ${JSON.stringify(path.join(root, "scenarios", "default"))};
+    for (const f of ["world.json", "scenario.json", "colors.json", "game.json"]) fs.rmSync(dir + "/" + f, { force: true });
+    store.ensureScenarioStore();
+    ${report("{ world: store.getScenarioDetails('default').data.world, catalog: store.getScenarioCatalog().scenarios.map((s) => s.id) }")}
+  `);
+  assert.deepEqual(result.catalog, ["default"]);
+  assert.equal(result.world.builtInMap, STAMP);
+  assert.equal(result.world.customRegions, true);
+  assert.ok(existsSync(path.join(root, "scenarios", "default", "colors.json")));
+});
