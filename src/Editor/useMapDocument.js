@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { OWNER_SCHEMA } from "./documentMigration.js";
 import { normalizeTagList } from "../runtime/countryTags.js";
+import { mergeCityMarkers } from "./cityMarkers.js";
 
 // The official editor ships a handful of region "types" carrying render +
 // gameplay settings. We seed the two core ones (Land / Coastal); users add more.
@@ -367,6 +368,22 @@ export const useMapDocument = (initial) => {
     return summary;
   }, [doc.polities]);
 
+  // City markers from the Province Map Importer (its "Import explicit city Point
+  // markers" option): the rows collectImportedCityPoints builds become point
+  // features next to the hand-placed ones, so they reach the scenario's
+  // cities.geojson through buildGameSeed like any other city. The merge itself is
+  // the import-free cityMarkers.js; this is the state wrapper. Returns the
+  // summary the importer's status line reports ({ count, created, updated,
+  // replaced, skipped }) — computed from the document as it is now; the state
+  // update recomputes on whatever the document is when React applies it.
+  const importCityMarkers = useCallback((rows, { replaceExisting = false } = {}) => {
+    const options = { replaceExisting, nextId: () => newId("feat") };
+    const { count, created, updated, replaced, skipped } = mergeCityMarkers(doc.features, rows, options);
+    setDoc((d) => ({ ...d, features: mergeCityMarkers(d.features, rows, options).features }));
+    setSaveStatus("dirty");
+    return { count, created, updated, replaced, skipped };
+  }, [doc.features]);
+
   const patchMetadata = useCallback((patch) => {
     setDoc((d) => ({ ...d, metadata: { ...d.metadata, ...patch } }));
     setSaveStatus("dirty");
@@ -405,6 +422,7 @@ export const useMapDocument = (initial) => {
     renamePolityDisplay,
     removePolity,
     importPolityRoster,
+    importCityMarkers,
     mergeColors,
     types: doc.types,
     setTypes,
