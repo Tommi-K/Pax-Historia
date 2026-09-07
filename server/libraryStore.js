@@ -38,6 +38,50 @@ const DEFAULT_SCENARIO_ID = "default";
 const DEFAULT_GAME_ID = "default";
 
 // ---------------------------------------------------------------------------
+// The built-in scenario ("Modern Day") ships INSIDE the app as a seed directory
+// and is copied into the writable data dir: on a true first run, and again
+// whenever the packaged seed carries a newer map than the install has (the
+// world.json `builtInMap` stamp). server/data is runtime state only.
+//
+// Its map is a hand-drawn world with its own cities, not the stock GADM world.
+// The GADM world lives on as the STOCK geometry that every scenario without a
+// map of its own renders on — the hub's re-ownership presets key their
+// ownership by GADM ids — downloaded by scripts/fetch-map-assets.mjs to
+// server/data/stock/regions.geojson.
+// ---------------------------------------------------------------------------
+const BUILT_IN_SEED_DIR = path.join(PROJECT_ROOT, "server", "seed", "default");
+const STOCK_DIR = path.join(SERVER_DATA_DIR, "stock");
+const STOCK_REGIONS_PATH = path.join(STOCK_DIR, "regions.geojson");
+const MAP_ASSETS_MANIFEST = path.join(PROJECT_ROOT, "scripts", "map-assets.json");
+// Everything the seed contributes to the install's copy of the scenario.
+// prompts.json is deliberately NOT here: a packaged install never had one and
+// runs on the code's current defaults, which is what a new game should get.
+const BUILT_IN_SEED_FILES = [
+  "scenario.json",
+  "world.json",
+  "game.json",
+  "colors.json",
+  "cover-image.bin",
+  "regions.geojson",
+  "cities.geojson",
+  "storage/actions.json",
+  "storage/advisor.json",
+  "storage/chat.json",
+  "storage/events.json",
+];
+// Files an older copy of the scenario can carry that the seed does not. They
+// go when the scenario is reset to the seed, or the old map would bleed through.
+const BUILT_IN_RESET_STALE_FILES = [
+  "flags.json",
+  "tags.json",
+  "background.json",
+  "regions.coarse.geojson",
+  "regions.coarse.geojson.stamp",
+];
+// Where the campaigns started on an older built-in map are moved to.
+const CLASSIC_SCENARIO_ID = "modern-day-classic";
+
+// ---------------------------------------------------------------------------
 // Owner references use a STABLE polity lineage key once a record is migrated.
 // The visible polity name may change mid-campaign; that display change must not
 // re-key ownership, colors, flags, chats, or the played country.
@@ -1109,6 +1153,170 @@ const seedGameJsonFilesFromGame = (gameId, sourceGameId) => {
   copyGameOptionalAssets(gameId, sourceGameId);
 };
 
+const readBuiltInSeedStamp = () => {
+  const world = readJsonFile(path.join(BUILT_IN_SEED_DIR, "world.json"), null);
+  return String(world?.builtInMap ?? "").trim() || null;
+};
+
+const readInstalledBuiltInStamp = () => {
+  const world = readJsonFile(getScenarioJsonPath(DEFAULT_SCENARIO_ID, "world"), null);
+  return String(world?.builtInMap ?? "").trim() || null;
+};
+
+// The manifest's byte size for the stock world: how an older install's built-in
+// regions.geojson is recognised as that world (the fetcher wrote it there before
+// the stock map had a home of its own).
+const readStockRegionsBytes = () => {
+  const manifest = readJsonFile(MAP_ASSETS_MANIFEST, null);
+  const entry = (manifest?.assets ?? []).find(
+    (asset) => asset?.path === "server/data/stock/regions.geojson",
+  );
+  return Number(entry?.bytes) || null;
+};
+
+// Where a scenario without a map of its own gets its geometry. An install that
+// predates the stock map's own home still keeps it as the built-in scenario's
+// regions.geojson, until the seed sync below moves it.
+const resolveStockRegionsPath = () => {
+  if (fs.existsSync(STOCK_REGIONS_PATH)) return STOCK_REGIONS_PATH;
+  const legacy = getScenarioUploadPath(DEFAULT_SCENARIO_ID, "regionsGeojson");
+  if (fs.existsSync(legacy) && !readInstalledBuiltInStamp()) return legacy;
+  return null;
+};
+
+const copySeedFile = (relative, targetDir) => {
+  const source = path.join(BUILT_IN_SEED_DIR, relative);
+  if (!fs.existsSync(source)) return false;
+  const target = path.join(targetDir, relative);
+  ensureDirectory(path.dirname(target));
+  // read + write rather than copyFile: the seed may sit inside the app archive.
+  fs.writeFileSync(target, fs.readFileSync(source));
+  return true;
+};
+
+const seedBuiltInScenarioFiles = (stamp) => {
+  const dir = getScenarioDirectory(DEFAULT_SCENARIO_ID);
+  ensureDirectory(dir);
+  ensureDirectory(path.join(dir, "storage"));
+  for (const relative of BUILT_IN_SEED_FILES) copySeedFile(relative, dir);
+  for (const relative of BUILT_IN_RESET_STALE_FILES) removeFileIfPresent(path.join(dir, relative));
+  const worldPath = getScenarioJsonPath(DEFAULT_SCENARIO_ID, "world");
+  const world = readJsonFile(worldPath, {});
+  if (world.builtInMap !== stamp) writeJsonFile(worldPath, { ...world, builtInMap: stamp });
+};
+
+const listGameIdsOnDisk = () => {
+  if (!fs.existsSync(GAMES_DIR)) return [];
+  return fs
+    .readdirSync(GAMES_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .map((entry) => entry.name)
+    .filter((gameId) => fs.existsSync(getGameMetaPath(gameId)));
+};
+
+// An older install's built-in regions.geojson is either the stock world — moved
+// to its new home, which saves the download — or a map the player uploaded into
+// the built-in scenario themselves, which a fork keeps. Returns the path a fork
+// should carry as its own map, or null when it needs none.
+const retireLegacyBuiltInRegions = () => {
+  const legacy = getScenarioUploadPath(DEFAULT_SCENARIO_ID, "regionsGeojson");
+  if (!fs.existsSync(legacy)) return null;
+  const stockBytes = readStockRegionsBytes();
+  const isStock = stockBytes !== null && fs.statSync(legacy).size === stockBytes;
+  if (!isStock) return legacy;
+  if (fs.existsSync(STOCK_REGIONS_PATH)) {
+    removeFileIfPresent(legacy);
+  } else {
+    ensureDirectory(STOCK_DIR);
+    fs.renameSync(legacy, STOCK_REGIONS_PATH);
+  }
+  return null;
+};
+
+// Fork the install's current built-in scenario so the campaigns started on it
+// keep their map, then point those campaigns at the fork.
+const forkBuiltInScenarioForExistingGames = (gameIds, ownRegionsPath) => {
+  const sourceDir = getScenarioDirectory(DEFAULT_SCENARIO_ID);
+  const forkId = ensureUniqueId(CLASSIC_SCENARIO_ID, "scenario");
+  const forkDir = getScenarioDirectory(forkId);
+  ensureDirectory(forkDir);
+  const skip = new Set(["regions.geojson", "regions.coarse.geojson", "regions.coarse.geojson.stamp"]);
+  fs.cpSync(sourceDir, forkDir, { recursive: true, filter: (source) => !skip.has(path.basename(source)) });
+  if (ownRegionsPath) fs.renameSync(ownRegionsPath, path.join(forkDir, "regions.geojson"));
+
+  const meta = readScenarioMeta(DEFAULT_SCENARIO_ID);
+  const now = new Date().toISOString();
+  const blurb = `The world map ${meta.name} used before it was redrawn. Kept for the campaigns that were started on it.`;
+  writeJsonFile(getScenarioMetaPath(forkId), {
+    ...meta,
+    id: forkId,
+    name: `${meta.name} (classic map)`,
+    heroTitle: `${meta.heroTitle || meta.name} (classic map)`,
+    subtitle: "The map before the built-in scenario was redrawn",
+    description: blurb,
+    heroSubtitle: blurb,
+    hubOrigin: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  for (const gameId of gameIds) writeGameMeta(gameId, { scenarioId: forkId });
+
+  const manifest = getScenarioManifest();
+  manifest.order = resolveOrderedIds(manifest.order, SCENARIOS_DIR, DEFAULT_SCENARIO_ID).filter(
+    (entry) => entry !== forkId,
+  );
+  const at = manifest.order.indexOf(DEFAULT_SCENARIO_ID);
+  manifest.order.splice(at >= 0 ? at + 1 : manifest.order.length, 0, forkId);
+  saveScenarioManifest(manifest);
+  return forkId;
+};
+
+// Once per process: the packaged seed cannot change while the server runs, and
+// ensure* runs on the read path (every poll), so the stamp is compared once.
+let builtInScenarioSynced = false;
+const syncBuiltInScenarioFromSeed = () => {
+  if (builtInScenarioSynced) return;
+  const stamp = readBuiltInSeedStamp();
+  if (!stamp) {
+    builtInScenarioSynced = true; // a tree without the seed: nothing to sync
+    return;
+  }
+  const scenarioDir = getScenarioDirectory(DEFAULT_SCENARIO_ID);
+  const firstRun =
+    !fs.existsSync(getScenarioMetaPath(DEFAULT_SCENARIO_ID)) &&
+    !fs.existsSync(getScenarioJsonPath(DEFAULT_SCENARIO_ID, "world"));
+  if (firstRun) {
+    seedBuiltInScenarioFiles(stamp);
+    builtInScenarioSynced = true;
+    console.warn(`[built-in scenario] seeded Modern Day (${stamp}) into ${scenarioDir}`);
+    return;
+  }
+  if (readInstalledBuiltInStamp() === stamp) {
+    builtInScenarioSynced = true;
+    return;
+  }
+
+  // The install's copy is an older map. The campaigns started on it — and a copy
+  // the player edited — keep that map in a fork; then the built-in becomes the seed.
+  const gamesOnBuiltIn = listGameIdsOnDisk().filter(
+    (gameId) => readGameMeta(gameId).scenarioId === DEFAULT_SCENARIO_ID,
+  );
+  const meta = readScenarioMeta(DEFAULT_SCENARIO_ID);
+  const touched = meta.updatedAt !== meta.createdAt;
+  const ownRegions = retireLegacyBuiltInRegions();
+  if (gamesOnBuiltIn.length || touched) {
+    const forkId = forkBuiltInScenarioForExistingGames(gamesOnBuiltIn, ownRegions);
+    console.warn(
+      `[built-in scenario] kept the previous Modern Day as "${forkId}" for ${gamesOnBuiltIn.length} campaign(s)${touched ? " and the player's edits" : ""}`,
+    );
+  } else if (ownRegions) {
+    removeFileIfPresent(ownRegions);
+  }
+  seedBuiltInScenarioFiles(stamp);
+  builtInScenarioSynced = true;
+  console.warn(`[built-in scenario] Modern Day updated to ${stamp}`);
+};
+
 const ensureDefaultScenario = () => {
   ensureDirectory(SCENARIOS_DIR);
   const scenarioDir = getScenarioDirectory(DEFAULT_SCENARIO_ID);
@@ -1119,6 +1327,8 @@ const ensureDefaultScenario = () => {
   if (fs.existsSync(SCENARIO_MANIFEST_PATH) && !fs.existsSync(scenarioDir)) {
     return;
   }
+
+  syncBuiltInScenarioFromSeed();
 
   ensureDirectory(scenarioDir);
   ensureDirectory(path.join(scenarioDir, "storage"));
@@ -1643,12 +1853,27 @@ const createScenario = ({
   if (sourceScenario) {
     seedScenarioJsonFilesFromScenario(scenarioId, seedScenarioId);
   } else {
-    // Seed from the default scenario's committed files
+    // Seed from the built-in scenario's files: its world and game state...
     for (const [assetKey] of Object.entries(JSON_ASSET_FILES)) {
       copyJsonFile(
         getScenarioJsonPath(DEFAULT_SCENARIO_ID, assetKey),
                    getScenarioJsonPath(scenarioId, assetKey),
                    JSON_ASSET_DEFAULTS[assetKey],
+      );
+    }
+    // ...and its map. A scenario made from scratch starts as the built-in world
+    // — its regions, its cities, its colours, its flags — not the stock GADM
+    // world, so the Workshop opens on the same map the game shows.
+    for (const [assetKey] of Object.entries(OPTIONAL_JSON_ASSET_FILES)) {
+      copyFileIfPresent(
+        getScenarioJsonPath(DEFAULT_SCENARIO_ID, assetKey),
+        getScenarioJsonPath(scenarioId, assetKey),
+      );
+    }
+    for (const [assetKey] of Object.entries(SCENARIO_GEOJSON_ASSET_FILES)) {
+      copyFileIfPresent(
+        getScenarioUploadPath(DEFAULT_SCENARIO_ID, assetKey),
+        getScenarioUploadPath(scenarioId, assetKey),
       );
     }
   }
@@ -2400,11 +2625,11 @@ const ensureScenarioOwnerSchema = (scenarioId) => {
     // regionOwnershipOverrides. Borrow the default geometry as READ-ONLY context;
     // never rewrite another scenario's map during migration.
     const ownRegionsPath = getScenarioUploadPath(scenarioId, "regionsGeojson");
-    const defaultRegionsPath = getScenarioUploadPath(DEFAULT_SCENARIO_ID, "regionsGeojson");
+    const stockRegionsPath = resolveStockRegionsPath();
     const borrowDefaultRegions =
       scenarioId !== DEFAULT_SCENARIO_ID &&
       !fs.existsSync(ownRegionsPath) &&
-      fs.existsSync(defaultRegionsPath);
+      Boolean(stockRegionsPath);
 
     migrateOwnerRecordAtPaths(key, {
       world: getScenarioJsonPath(scenarioId, "world"),
@@ -2413,7 +2638,7 @@ const ensureScenarioOwnerSchema = (scenarioId) => {
       colors: getScenarioJsonPath(scenarioId, "colors"),
       flags: getScenarioJsonPath(scenarioId, "flags"),
       tags: getScenarioJsonPath(scenarioId, "tags"),
-      regions: borrowDefaultRegions ? defaultRegionsPath : ownRegionsPath,
+      regions: borrowDefaultRegions ? stockRegionsPath : ownRegionsPath,
       regionsReadOnly: borrowDefaultRegions,
     });
   } catch (error) {
@@ -2498,19 +2723,24 @@ const readRuntimeJsonAsset = (assetKey) => {
     let sourcePath = getScenarioUploadPath(scenario.id, assetKey);
     if (!fs.existsSync(sourcePath)) {
       sourcePath = null;
-      // Scenarios without a map of their own use the built-in Modern Day
-      // geometry, so EVERY scenario renders with the custom map style (the
-      // scenario's ownership overrides still recolor it). Cities stay absent
-      // unless the scenario ships its own set.
+      // Scenarios without a map of their own render on the STOCK world (the
+      // hub's re-ownership presets key their ownership by its GADM ids), so
+      // EVERY scenario renders with the custom map style (the scenario's
+      // ownership overrides still recolor it). Not the built-in scenario's own
+      // map: since Modern Day was redrawn that is a different world, and a
+      // scenario CREATED from it carries its own copy (createScenario). Cities
+      // stay absent unless the scenario ships its own set.
       if (assetKey === "regionsGeojson" && scenario.id !== DEFAULT_SCENARIO_ID) {
-        // Borrowing the Modern Day map. Migrate it as DEFAULT'S record, not this
-        // scenario's: the file's owners live in default's owner-space, so
-        // resolving them against this scenario's polities would name Russia after
-        // whatever this world calls that token. This scenario's own ownership is
-        // in its world.regionOwnershipOverrides and migrated with its own record.
-        ensureScenarioOwnerSchema(DEFAULT_SCENARIO_ID);
-        const defaultPath = getScenarioUploadPath(DEFAULT_SCENARIO_ID, assetKey);
-        if (fs.existsSync(defaultPath)) sourcePath = defaultPath;
+        const stockPath = resolveStockRegionsPath();
+        if (stockPath) {
+          // An install that still keeps the stock world as the built-in's file
+          // migrates it as DEFAULT'S record, not this scenario's: the file's
+          // owners live in default's owner-space, so resolving them against this
+          // scenario's polities would name Russia after whatever this world
+          // calls that token. The stock map's own home needs no migration.
+          if (stockPath !== STOCK_REGIONS_PATH) ensureScenarioOwnerSchema(DEFAULT_SCENARIO_ID);
+          sourcePath = stockPath;
+        }
       }
     }
     return {

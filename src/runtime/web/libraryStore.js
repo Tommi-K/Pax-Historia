@@ -13,6 +13,7 @@ import {
   parseJsonValue, serializeJsonValue,
 } from "./util.js";
 import FALLBACK_COLORS from "./generated/fallbackColors.js";
+import { builtInMap as BUILT_IN_MAP, regionsUrl as BUILT_IN_REGIONS_URL } from "./generated/defaultScenarioMeta.js";
 import {
   DEFAULT_SCENARIO_ID, DEFAULT_GAME_ID, EMPTY_FEATURE_COLLECTION, COVER_IMAGE_ASSET_KEY,
   JSON_ASSET_KEYS, STORAGE_JSON_ASSET_KEYS, OPTIONAL_JSON_ASSET_KEYS, RUNTIME_ONLY_JSON_ASSET_KEYS,
@@ -409,10 +410,50 @@ const getActiveRuntimeScenarioRecord = async () => {
   return (await getScenario(scenarioId)) ?? (await getScenario(DEFAULT_SCENARIO_ID));
 };
 
-// The default scenario's political geometry (regions.geojson, ~12 MB) is too big
-// to bundle in the web seed, so fetch it once from the content origin (the Worker
-// proxy → GitHub Release) and cache it for the session. Without it the default
-// scenario (customRegions: true) renders no colored countries and no labels.
+// The built-in scenario's own map — Modern Day was redrawn — ships as a static
+// asset of the web build (scripts/seed-web-defaults.mjs); fetched once per
+// session. A scenario carries this map when its world bears the seed's
+// `builtInMap` stamp: the built-in itself, a clone of it, a scenario created
+// from scratch (all copy world.json). Everything else without a map of its own
+// renders on the STOCK world from the content origin below, as before.
+const usesBuiltInMap = (record) =>
+  Boolean(BUILT_IN_MAP && BUILT_IN_REGIONS_URL) && record?.json?.world?.builtInMap === BUILT_IN_MAP;
+let builtInRegionsPromise = null;
+const fetchBuiltInRegionsBytes = () => {
+  if (!builtInRegionsPromise) {
+    builtInRegionsPromise = fetch(BUILT_IN_REGIONS_URL, { cache: "force-cache" })
+      .then((response) => (response.ok ? response.arrayBuffer() : null))
+      .catch(() => null)
+      .then((bytes) => {
+        if (!bytes || bytes.byteLength === 0) { builtInRegionsPromise = null; return null; }
+        return bytes;
+      });
+  }
+  return builtInRegionsPromise;
+};
+let builtInRegionsTextPromise = null;
+const fetchBuiltInRegionsText = () => {
+  if (!builtInRegionsTextPromise) {
+    builtInRegionsTextPromise = fetchBuiltInRegionsBytes().then((bytes) => (bytes ? new TextDecoder().decode(bytes) : null));
+  }
+  return builtInRegionsTextPromise;
+};
+const fetchBuiltInRegionsGeojson = async () => {
+  const text = await fetchBuiltInRegionsText();
+  return text ? parseJsonValue(text, null) : null;
+};
+let builtInCoarseTextPromise = null;
+const builtInCoarseRegionsText = () => {
+  if (!builtInCoarseTextPromise) {
+    builtInCoarseTextPromise = fetchBuiltInRegionsGeojson().then((data) => (data ? serializeJsonValue(coarsenFeatureCollection(data)) : null));
+  }
+  return builtInCoarseTextPromise;
+};
+
+// The STOCK world (the GADM regions the hub's re-ownership presets key their
+// ownership by) is too big to bundle, so fetch it once from the content origin
+// (the Worker proxy → GitHub Release) and cache it for the session. It is what
+// a scenario without a map of its own — and without the built-in stamp — renders on.
 const CONTENT_BASE = (import.meta.env.VITE_OH_PMTILES_URL || "/assets").replace(/\/$/, "");
 let defaultRegionsGeojsonPromise = null;
 const fetchDefaultRegionsGeojson = () => {
@@ -454,6 +495,11 @@ export const readRuntimeGeojsonRaw = async (assetKey = "regionsGeojson") => {
   const scenario = await getActiveRuntimeScenarioRecord();
   if (scenario && ensureOwnerSchema(scenario, "scenario")) await idbPut(STORES.scenarios, scenario);
   let value = scenario?.geojson?.[assetKey];
+  if (value === undefined && assetKey === "regionsGeojson" && scenario && usesBuiltInMap(scenario)) {
+    // The built-in map, as bytes so the parse stays in the worker.
+    const bytes = await fetchBuiltInRegionsBytes();
+    if (bytes) return { kind: "bytes", payload: bytes };
+  }
   if (value === undefined && assetKey === "regionsGeojson" && scenario && scenario.id !== DEFAULT_SCENARIO_ID) {
     const fallback = await getScenario(DEFAULT_SCENARIO_ID);
     if (fallback && ensureOwnerSchema(fallback, "scenario")) await idbPut(STORES.scenarios, fallback);
@@ -568,8 +614,11 @@ const readRuntimeJsonAsset = async (assetKey) => {
     // The scenario owns its geometry; migrate it as its OWN record.
     if (scenario && ensureOwnerSchema(scenario, "scenario")) await idbPut(STORES.scenarios, scenario);
     let value = scenario?.geojson?.[assetKey];
+    if (value === undefined && assetKey === "regionsGeojson" && scenario && usesBuiltInMap(scenario)) {
+      value = await fetchBuiltInRegionsGeojson();
+    }
     if (value === undefined && assetKey === "regionsGeojson" && scenario && scenario.id !== DEFAULT_SCENARIO_ID) {
-      // Borrowing the Modern Day map. Migrate it as DEFAULT'S record, never this
+      // Borrowing the stock world's record. Migrate it as DEFAULT'S record, never this
       // scenario's: those owners live in default's owner-space, so resolving them
       // against this world's polities would name Russia after whatever this
       // scenario calls that token. This scenario's own ownership is in its
@@ -740,10 +789,15 @@ const createScenario = async (body = {}) => {
     // Seed from another scenario: json + optional assets (+ snapshot handling).
     seedScenarioJsonFromScenario(record, sourceRecord, baseRecord);
   } else {
-    // No seed: copy ONLY the 7 json assets from the default (server does not copy
-    // optional assets — cover/colors/pmtiles/geojson — on this path).
+    // No seed: the 7 json assets from the built-in scenario, plus its map — a
+    // scenario made from scratch starts as the built-in world (colours, flags,
+    // cities; the regions follow the world's builtInMap stamp, see usesBuiltInMap).
+    // Not the cover.
     record.json = {};
     for (const key of JSON_ASSET_KEYS) record.json[key] = cloneJson(baseRecord.json?.[key] ?? JSON_ASSET_DEFAULTS[key]);
+    if (baseRecord.colors !== undefined) record.colors = cloneJson(baseRecord.colors);
+    if (baseRecord.flags !== undefined) record.flags = cloneJson(baseRecord.flags);
+    record.geojson = { ...(baseRecord.geojson ?? {}) };
   }
 
   // Meta cascade + seed inheritance, byte-faithful to server createScenario (:1260).
@@ -1003,7 +1057,7 @@ const coarseRegionsText = (record) => {
   return text;
 };
 
-const scenarioAssetResponse = (record, key, rangeHeader, { coarse = false } = {}) => {
+const scenarioAssetResponse = async (record, key, rangeHeader, { coarse = false } = {}) => {
   if (key === COVER_IMAGE_ASSET_KEY) {
     if (!record.cover) throw new Error("Asset not found");
     return binaryResponse(record.cover.bytes, record.cover.contentType || "application/octet-stream", rangeHeader);
@@ -1018,9 +1072,18 @@ const scenarioAssetResponse = (record, key, rangeHeader, { coarse = false } = {}
     return binaryResponse(record.pmtiles[key], "application/octet-stream", rangeHeader);
   }
   if (SCENARIO_GEOJSON_ASSET_KEYS.includes(key)) {
+    const jsonHeaders = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" };
+    if (record.geojson?.[key] === undefined && key === "regionsGeojson" && usesBuiltInMap(record)) {
+      // The built-in map is not stored in the record (it is a bundled asset), but
+      // the Workshop and the country picker open a scenario's map through this
+      // route, and this scenario's map is that one.
+      const text = coarse ? await builtInCoarseRegionsText() : await fetchBuiltInRegionsText();
+      if (!text) throw new Error("Asset not found");
+      return new Response(text, { status: 200, headers: jsonHeaders });
+    }
     if (record.geojson?.[key] === undefined) throw new Error("Asset not found");
     const text = coarse && key === "regionsGeojson" ? coarseRegionsText(record) : serializeJsonValue(record.geojson[key]);
-    return new Response(text, { status: 200, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
+    return new Response(text, { status: 200, headers: jsonHeaders });
   }
   throw new Error(`Unsupported asset key: ${key}`);
 };
@@ -1213,19 +1276,77 @@ const defaultScenarioSeedRecord = async () => {
     world: cloneJson(DEFAULT_SEED.data?.world ?? {}),
   };
   record.colors = DEFAULT_SEED.colors !== undefined ? cloneJson(DEFAULT_SEED.colors) : undefined;
+  // The scenario's authored cities; its regions are the bundled asset (usesBuiltInMap).
+  record.geojson = DEFAULT_SEED.geojson?.citiesGeojson ? { citiesGeojson: cloneJson(DEFAULT_SEED.geojson.citiesGeojson) } : {};
   record.cover = DEFAULT_SEED.cover ? { contentType: DEFAULT_SEED.cover.contentType, bytes: base64ToBytes(DEFAULT_SEED.cover.base64) } : undefined;
   return record;
 };
 
-export const ensureSeeded = async () => {
-  if (await kvGet("seeded", false)) return;
-  if (!(await getScenario(DEFAULT_SCENARIO_ID))) {
-    await putScenario(await defaultScenarioSeedRecord());
+// The stored built-in scenario predates the map the seed carries (Modern Day
+// was redrawn). Mirrors the server's syncBuiltInScenarioFromSeed: the campaigns
+// started on the old map — and a copy the player edited — keep it in a fork,
+// then the built-in becomes the seed. The old record never held the stock
+// geometry (it came from the content origin), and the fork keeps not holding it,
+// so it goes on rendering the stock world exactly as before.
+const syncBuiltInScenarioFromSeed = async () => {
+  if (!BUILT_IN_MAP) return;
+  const current = await getScenario(DEFAULT_SCENARIO_ID);
+  if (!current) return; // deleted on purpose: stays deleted
+  if (current.json?.world?.builtInMap === BUILT_IN_MAP) return;
+
+  const games = (await idbGetAll(STORES.games)).filter(
+    (game) => readGameMeta(game.id, game.meta ?? {}).scenarioId === DEFAULT_SCENARIO_ID,
+  );
+  const touched = current.meta?.updatedAt !== current.meta?.createdAt;
+  if (games.length || touched) {
+    const forkId = await ensureUniqueId("modern-day-classic", "scenario");
+    const name = current.meta?.name || DEFAULT_SCENARIO_META.name;
+    const now = nowIso();
+    const blurb = `The world map ${name} used before it was redrawn. Kept for the campaigns that were started on it.`;
+    const fork = {
+      ...current,
+      id: forkId,
+      meta: {
+        ...current.meta,
+        id: forkId,
+        name: `${name} (classic map)`,
+        heroTitle: `${current.meta?.heroTitle || name} (classic map)`,
+        subtitle: "The map before the built-in scenario was redrawn",
+        description: blurb,
+        heroSubtitle: blurb,
+        hubOrigin: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    };
+    await putScenario(fork);
+    for (const game of games) {
+      writeGameMeta(game, { scenarioId: forkId });
+      await putGame(game);
+    }
     const manifest = await getScenarioManifest();
-    if (!manifest.order.includes(DEFAULT_SCENARIO_ID)) manifest.order.unshift(DEFAULT_SCENARIO_ID);
-    await saveScenarioManifest({ order: manifest.order, selectedScenarioId: manifest.selectedScenarioId || DEFAULT_SCENARIO_ID });
+    const order = manifest.order.filter((entry) => entry !== forkId);
+    const at = order.indexOf(DEFAULT_SCENARIO_ID);
+    order.splice(at >= 0 ? at + 1 : order.length, 0, forkId);
+    await saveScenarioManifest({ order, selectedScenarioId: manifest.selectedScenarioId });
+    console.info(`[built-in scenario] kept the previous Modern Day as "${forkId}" for ${games.length} campaign(s)${touched ? " and the player's edits" : ""}`);
   }
-  await kvPut("seeded", true);
+  const fresh = await defaultScenarioSeedRecord();
+  await putScenario(fresh);
+  console.info(`[built-in scenario] Modern Day updated to ${BUILT_IN_MAP}`);
+};
+
+export const ensureSeeded = async () => {
+  if (!(await kvGet("seeded", false))) {
+    if (!(await getScenario(DEFAULT_SCENARIO_ID))) {
+      await putScenario(await defaultScenarioSeedRecord());
+      const manifest = await getScenarioManifest();
+      if (!manifest.order.includes(DEFAULT_SCENARIO_ID)) manifest.order.unshift(DEFAULT_SCENARIO_ID);
+      await saveScenarioManifest({ order: manifest.order, selectedScenarioId: manifest.selectedScenarioId || DEFAULT_SCENARIO_ID });
+    }
+    await kvPut("seeded", true);
+  }
+  await syncBuiltInScenarioFromSeed();
 };
 
 // --- Router handlers ------------------------------------------------------

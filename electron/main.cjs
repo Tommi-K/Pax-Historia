@@ -287,6 +287,28 @@ let setupWindow = null;
 // verifyMapData() below closes that: it runs the fetcher's --ensure pass after
 // the window is up, which checks the SHA-256 of anything it has not already
 // verified and quietly re-downloads what doesn't match.
+// Until this build the stock world lived as the built-in scenario's own
+// regions.geojson; the manifest now keeps it under server/data/stock. An
+// install that already has the file needs no 55 MB download, so it is moved
+// into place BEFORE the manifest is checked. server/libraryStore.js does the
+// same for the installs that never pass through this screen (source, Termux).
+const relocateLegacyStockMap = () => {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(MANIFEST, "utf8"));
+    const stock = (manifest.assets ?? []).find((asset) => asset.path === "server/data/stock/regions.geojson");
+    if (!stock) return;
+    const target = path.join(USER_ROOT, stock.path);
+    const legacy = path.join(USER_ROOT, "server", "data", "scenarios", "default", "regions.geojson");
+    if (fs.existsSync(target) || !fs.existsSync(legacy)) return;
+    // A file of another size is a map the player put there, not ours to move.
+    if (fs.statSync(legacy).size !== stock.bytes) return;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.renameSync(legacy, target);
+  } catch {
+    // Best effort: the fetcher downloads the file if this could not move it.
+  }
+};
+
 const missingAssets = () => {
   let manifest;
   try {
@@ -552,6 +574,7 @@ const startServer = async () => {
 
 const boot = async () => {
   installAutoUpdater();
+  relocateLegacyStockMap();
   const pending = missingAssets();
   if (pending.length) {
     setupWindow = createSetupWindow();
