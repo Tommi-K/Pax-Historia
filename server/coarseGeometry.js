@@ -9,6 +9,13 @@
 // web store, which build a coarse copy of a scenario's regions on demand.
 // Dependency-free on purpose: it runs in Node, in a worker and in the page.
 //
+// It lives under server/ because that is what the desktop app packages: the
+// Electron build ships dist/ (the built client) and server/, never src/, so a
+// server-side import of src/… loads in development and fails in the installed
+// app ("Cannot find module …/app.asar/src/…" took the beta down at startup).
+// Code both sides use goes here and the client imports it from ../../server/,
+// like ownerMigration.js — server/serverImports.test.js enforces it.
+//
 // COARSE_TOLERANCE_DEG is the band: 0.01° is 0.64 px at z5.5 and under a pixel
 // everywhere the coarse copy is drawn. COARSE_MIN_SPAN_DEG drops rings too
 // small to see; a region whose every ring is that small keeps its largest one

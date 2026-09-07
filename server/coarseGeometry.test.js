@@ -11,7 +11,7 @@ import {
   coarsenFeatureCollection,
   coarsenGeometry,
   countFeatureCollectionVertices,
-} from "../src/runtime/coarseGeometry.js";
+} from "./coarseGeometry.js";
 
 // A wobbly ring: a square with 200 near-collinear points per side.
 const wobblySquare = (x, y, size, wobble = 0.001) => {

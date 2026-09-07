@@ -20,7 +20,7 @@ const PROJECT_ROOT = path.join(__dirname, "..");
 const DIST_DIR = path.join(PROJECT_ROOT, "dist");
 const PUBLIC_DIR = path.join(PROJECT_ROOT, "public");
 import { DATA_DIR as SERVER_DATA_DIR } from "./dataDir.js";
-import { coarsenFeatureCollection } from "../src/runtime/coarseGeometry.js";
+import { coarsenFeatureCollection } from "./coarseGeometry.js";
 const SCENARIOS_DIR = path.join(SERVER_DATA_DIR, "scenarios");
 const GAMES_DIR = path.join(SERVER_DATA_DIR, "games");
 const SCENARIO_MANIFEST_PATH = path.join(SERVER_DATA_DIR, "scenario-manifest.json");

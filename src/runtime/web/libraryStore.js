@@ -7,7 +7,7 @@
 
 import { STORES, idbGet, idbGetAll, idbGetAllKeys, idbPut, idbPutPair, idbDelete, kvGet, kvPut } from "./idb.js";
 import { serializeWrite } from "./writeQueue.js";
-import { coarsenFeatureCollection } from "../coarseGeometry.js";
+import { coarsenFeatureCollection } from "../../../server/coarseGeometry.js";
 import {
   cloneJson, nowIso, jsonResponse, errorResponse, binaryResponse, base64ToBytes, bytesToBase64,
   parseJsonValue, serializeJsonValue,

@@ -177,7 +177,7 @@ Defined at `server/libraryStore.js:240-324`. These maps drive every read/write/s
 | `UPLOADABLE_SCENARIO_ASSET_FILES` | image ∪ optional-JSON ∪ PMTiles ∪ geojson | The valid `:assetKey` set for scenario upload/serve/delete |
 | `UPLOADABLE_GAME_ASSET_FILES` | just `cover` | Games only accept a cover upload |
 
-> `GET /api/scenarios/:id/assets/regionsGeojson?coarse=1` serves a coarse copy of the regions (`resolveScenarioCoarseRegionsAsset`, `src/runtime/coarseGeometry.js`): the far tier's Douglas-Peucker coarsening, built once per upload beside it as `regions.coarse.geojson` and invalidated by a size+mtime stamp. The country picker draws that (a few MB) instead of the full-resolution file (221 MB for the stock world); the web store computes the same on demand. Never exported or cloned.
+> `GET /api/scenarios/:id/assets/regionsGeojson?coarse=1` serves a coarse copy of the regions (`resolveScenarioCoarseRegionsAsset`, `server/coarseGeometry.js`): the far tier's Douglas-Peucker coarsening, built once per upload beside it as `regions.coarse.geojson` and invalidated by a size+mtime stamp. The country picker draws that (a few MB) instead of the full-resolution file (221 MB for the stock world); the web store computes the same on demand. Never exported or cloned.
 
 `flags`/`tags` are separate JSON assets (not fields on `world.json`) specifically because `world.json` is re-polled every 5 s and a few hundred flags would be megabytes on every poll (`server/libraryStore.js:258-270`). See [World state](world-state.md).
 
