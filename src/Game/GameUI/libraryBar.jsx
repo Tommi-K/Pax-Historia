@@ -1792,6 +1792,16 @@ const LibraryTopBar = () => {
     const currentWorld = details?.data?.world ?? {};
     const currentGame = details?.data?.game ?? {};
 
+    // A Workshop that has not finished loading the scenario's map holds an empty
+    // document, and writing that over a scenario with territory is never what a
+    // save meant. The Workshop disables its buttons until the map is in; this
+    // is the second line of defence for any other way in.
+    const seedRegionCount = Array.isArray(seed.regions?.features) ? seed.regions.features.length : 0;
+    const hadTerritory = Object.keys(currentWorld.regionOwnershipOverrides ?? {}).length > 0;
+    if (seedRegionCount === 0 && hadTerritory) {
+      throw new Error("The map in the editor is empty while this scenario has territory — its map had not finished loading. Wait for it to appear, then save again.");
+    }
+
     const savedScenarioDetails = await saveScenario(scenarioId, {
       world: {
         ...currentWorld,

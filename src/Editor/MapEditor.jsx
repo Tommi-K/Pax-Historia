@@ -81,6 +81,11 @@ const MapEditor = ({ onClose, scenarioName, onApplyToScenario, initialMap } = {}
   const [regionEpoch, setRegionEpoch] = useState(0);
   const [scenarioAction, setScenarioAction] = useState(""); // "save" | "save-exit" | "play" while writing scenario
   const [scenarioDirty, setScenarioDirty] = useState(false);
+  // Whether the scenario's own map has arrived and been loaded. The Workshop
+  // opens EMPTY in scenario mode (no default world underneath) and the map
+  // streams in afterwards — its geometry can be hundreds of MB — so until then
+  // the document holds nothing to save.
+  const [hydrated, setHydrated] = useState(false);
   const hydratedRef = useRef(false);
   const [cityPopup, setCityPopup] = useState(null); // {id, x, y, isNew} — inline city editor
   const [customBg, setCustomBg] = useState(null); // live background applied to the map
@@ -233,6 +238,15 @@ const MapEditor = ({ onClose, scenarioName, onApplyToScenario, initialMap } = {}
   // Playing is now an explicit third action instead of the only way to save.
   const persistScenario = async ({ play = false, closeAfter = false } = {}) => {
     if (!api || !onApplyToScenario || scenarioAction) return false;
+    // Before the scenario's map has loaded the document is empty, and a save
+    // then wrote an empty map over the scenario. That was the "save twice" bug:
+    // the first click, made while the map was still downloading, wiped it, and
+    // the second, once the map had appeared, wrote it back. The buttons are
+    // disabled until hydration; this guards every other way in.
+    if (scenarioMode && !hydrated) {
+      console.warn("[editor] scenario save requested before its map loaded — ignored.");
+      return false;
+    }
     const action = play ? "play" : closeAfter ? "save-exit" : "save";
     setScenarioAction(action);
     try {
@@ -451,6 +465,7 @@ const MapEditor = ({ onClose, scenarioName, onApplyToScenario, initialMap } = {}
     setCustomBgId(null);
     d.setSaveStatus("saved");
     setScenarioDirty(false);
+    setHydrated(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, initialMap]);
 
@@ -607,44 +622,44 @@ const MapEditor = ({ onClose, scenarioName, onApplyToScenario, initialMap } = {}
             <>
               <button
                 onClick={() => persistScenario({ play: false, closeAfter: false })}
-                disabled={Boolean(scenarioAction)}
-                title={`Save this map into ${scenarioName || "the scenario"} and keep editing`}
+                disabled={Boolean(scenarioAction) || !hydrated}
+                title={!hydrated ? "The scenario’s map is still loading" : `Save this map into ${scenarioName || "the scenario"} and keep editing`}
                 style={{
                   ...panelSurface,
                   padding: isMobile ? "9px 11px" : "8px 12px",
-                  cursor: scenarioAction ? "default" : "pointer",
+                  cursor: scenarioAction || !hydrated ? "default" : "pointer",
                   color: "white",
                   fontWeight: 700,
                   fontSize: isMobile ? 15 : 13,
-                  opacity: scenarioAction ? 0.75 : 1,
+                  opacity: scenarioAction || !hydrated ? 0.75 : 1,
                 }}
               >
-                {isMobile ? "💾" : scenarioAction === "save" ? "Saving…" : "💾 Save"}
+                {!hydrated ? (isMobile ? "⏳" : "Loading map…") : isMobile ? "💾" : scenarioAction === "save" ? "Saving…" : "💾 Save"}
               </button>
               <button
                 onClick={() => persistScenario({ play: false, closeAfter: true })}
-                disabled={Boolean(scenarioAction)}
-                title={`Save this map into ${scenarioName || "the scenario"} and leave the Workshop`}
+                disabled={Boolean(scenarioAction) || !hydrated}
+                title={!hydrated ? "The scenario’s map is still loading" : `Save this map into ${scenarioName || "the scenario"} and leave the Workshop`}
                 style={{
                   ...panelSurface,
                   padding: isMobile ? "9px 11px" : "8px 12px",
-                  cursor: scenarioAction ? "default" : "pointer",
+                  cursor: scenarioAction || !hydrated ? "default" : "pointer",
                   color: "white",
                   fontWeight: 700,
                   fontSize: isMobile ? 15 : 13,
-                  opacity: scenarioAction ? 0.75 : 1,
+                  opacity: scenarioAction || !hydrated ? 0.75 : 1,
                 }}
               >
                 {isMobile ? "↩" : scenarioAction === "save-exit" ? "Saving…" : "Save & Exit"}
               </button>
               <button
                 onClick={() => persistScenario({ play: true })}
-                disabled={Boolean(scenarioAction)}
-                title={`Save this map into ${scenarioName || "the scenario"} and start playing it`}
+                disabled={Boolean(scenarioAction) || !hydrated}
+                title={!hydrated ? "The scenario’s map is still loading" : `Save this map into ${scenarioName || "the scenario"} and start playing it`}
                 style={{
                   ...panelSurface,
                   padding: isMobile ? "9px 11px" : "8px 15px",
-                  cursor: scenarioAction ? "default" : "pointer",
+                  cursor: scenarioAction || !hydrated ? "default" : "pointer",
                   color: "white",
                   fontWeight: 700,
                   fontSize: isMobile ? 16 : 13,
@@ -654,7 +669,7 @@ const MapEditor = ({ onClose, scenarioName, onApplyToScenario, initialMap } = {}
                   gap: isMobile ? 0 : 6,
                   background: scenarioAction ? "rgba(59,130,246,0.35)" : "rgba(59,130,246,0.85)",
                   border: "1px solid rgba(147,197,253,0.5)",
-                  opacity: scenarioAction ? 0.8 : 1,
+                  opacity: scenarioAction || !hydrated ? 0.8 : 1,
                 }}
               >
                 {isMobile ? (scenarioAction === "play" ? "…" : "▶") : (scenarioAction === "play" ? "Applying…" : "▶ Apply & Play")}
