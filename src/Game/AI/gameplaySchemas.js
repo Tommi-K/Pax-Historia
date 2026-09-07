@@ -2246,7 +2246,7 @@ export const COUNTRY_STAT_GENERATION_SCHEMA = {
       type: "string",
       minLength: 1,
       description:
-        "Bounded regional territorial estimate. With a native macro plan, return exactly one row per [M#] macro bucket as index~group~population~gdpPerCapita. Native code expands each macro row back across every exact live-map component. Compatibility fallback without a native macro plan may use group~geography~population~gdpPerCapita. group is core, integrated, or overseas/dependent; population is an integer; gdpPerCapita is a positive NOMINAL output-per-capita number in constant 2026-EUR accounting terms; never PPP/international dollars.",
+        "Bounded regional territorial estimate. With a native macro plan, return exactly one row per [M#] macro bucket as index~group~population~gdpPerCapita. Native code expands each macro row back across every exact live-map component. For an explicitly NON-TERRITORIAL basis, compatibility rows may use group~geography~population~gdpPerCapita when campaign canon supports a real distributed people/organization/economy; return the literal NONE when no defensible quantitative scope exists. group is core, integrated, or overseas/dependent; population is an integer; gdpPerCapita is a positive NOMINAL output-per-capita number in constant 2026-EUR accounting terms; never PPP/international dollars.",
     },
     economy: {
       type: "object",
@@ -2335,9 +2335,15 @@ export const COUNTRY_STAT_SHEET_SCHEMA = {
       required: ["sovereignty", "foodAutonomy", "energyAutonomy", "economicIndependence", "internalSecurity", "internationalReputation"],
       additionalProperties: false,
     },
+    territorialScope: {
+      type: "string",
+      enum: ["mapped", "nonterritorial"],
+      description:
+        "Native accounting scope. mapped means territorialComponents must contain the authoritative live-map ledger. nonterritorial means this valid polity has no mapped national territorial basis; compatibility components may still represent a campaign-supported distributed people/organization/economy, or the array may be empty when no defensible quantitative scope exists.",
+    },
     population: {
       type: "object",
-      description: "Derived population aggregates. The runtime recomputes these from territorialComponents.",
+      description: "Derived population aggregates. The runtime recomputes these from territorialComponents when a quantitative component ledger exists.",
       properties: {
         total: { type: "integer", minimum: 0 },
         coreIntegrated: { type: "integer", minimum: 0 },
@@ -2347,9 +2353,9 @@ export const COUNTRY_STAT_SHEET_SCHEMA = {
     },
     territorialComponents: {
       type: "array",
-      minItems: 1,
+      minItems: 0,
       description:
-        "One demographic/economic component for every authoritative territorial geography in the live-map basis. There is deliberately no fixed component cap: map granularity must never delete population/GDP. Generation expands bounded regional macro estimates into this exact canonical ledger natively; the model does not author these rows one-by-one.",
+        "For mapped scope, one demographic/economic component for every authoritative territorial geography in the live-map basis. There is deliberately no fixed component cap: map granularity must never delete population/GDP. For explicit nonterritorial scope, this may contain campaign-supported distributed/non-map quantitative components or be empty when no defensible population/GDP basis exists.",
       items: {
         type: "object",
         properties: {
@@ -3057,6 +3063,9 @@ export const validateGameplayPayload = (taskKey, value) => {
   if (taskKey === "countryStatSheet") {
     const blankError = findBlankString(value);
     if (blankError) return { valid: false, error: blankError };
+    if (value.territorialComponents.length === 0 && value.territorialScope !== "nonterritorial") {
+      return { valid: false, error: "$.territorialComponents may be empty only when $.territorialScope is nonterritorial." };
+    }
     const breakdown = value.gdpBreakdown;
     if (breakdown.agriculture + breakdown.industry + breakdown.services !== 100) {
       return { valid: false, error: "$.gdpBreakdown percentages must sum to 100." };

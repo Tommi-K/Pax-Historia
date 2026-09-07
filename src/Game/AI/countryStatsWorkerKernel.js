@@ -990,15 +990,16 @@ export const buildTargetStatsTerritorialBasisKernel = ({ bundle, code, scenarioC
     return {
       context: [
         `Target: ${target}`,
-        "Accounting mode: LEGAL SOVEREIGNTY",
-        "No legally sovereign map regions were resolved for this polity.",
+        "Accounting mode: NON-TERRITORIAL",
+        "No legally sovereign national map regions were resolved for this polity.",
         controlledRegionCount > 0
           ? `The polity controls ${controlledRegionCount} region(s), but native statehood safeguards did NOT classify those holdings as a de-facto national administrative basis. Ordinary occupation therefore remains excluded from national population/GDP.`
           : "No de-facto controlled mapped regions were resolved either.",
-        "Do not silently substitute modern borders. If this is a landless polity, estimate only what the campaign canon actually supports.",
+        "Do not silently substitute modern borders. This is an explicit NON-TERRITORIAL Stats basis: estimate a distributed/non-map population or economy only when campaign canon supports one; otherwise return no quantitative scope.",
       ].join("\n"),
       plan: [],
-      mode,
+      macroPlan: [],
+      mode: "nonterritorial",
       referenceContext: "",
     };
   }

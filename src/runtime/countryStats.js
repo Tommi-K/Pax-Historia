@@ -15,8 +15,13 @@ export const COUNTRY_STATS_COMPONENT_GROUPS = Object.freeze([
   "integrated",
   "overseas/dependent",
 ]);
+export const COUNTRY_STATS_TERRITORIAL_SCOPES = Object.freeze([
+  "mapped",
+  "nonterritorial",
+]);
 
 const COMPONENT_GROUP_SET = new Set(COUNTRY_STATS_COMPONENT_GROUPS);
+const TERRITORIAL_SCOPE_SET = new Set(COUNTRY_STATS_TERRITORIAL_SCOPES);
 const INDEX_KEYS = Object.freeze([
   "sovereignty",
   "foodAutonomy",
@@ -391,8 +396,12 @@ export const normalizeCountryStatSheet = (value) => {
   const breakdown = normalizeBreakdown(value.gdpBreakdown);
   if (breakdown) out.gdpBreakdown = breakdown;
 
+  const territorialScope = clean(value.territorialScope).toLowerCase();
+  if (TERRITORIAL_SCOPE_SET.has(territorialScope)) out.territorialScope = territorialScope;
+
+  const hasExplicitComponents = Array.isArray(value.territorialComponents);
   const components = normalizeTerritorialComponents(value.territorialComponents);
-  if (components.length) out.territorialComponents = components;
+  if (components.length || hasExplicitComponents) out.territorialComponents = components;
 
   const continuity = normalizeCountryStatContinuity(value.continuity);
   if (continuity) out.continuity = continuity;
@@ -400,7 +409,7 @@ export const normalizeCountryStatSheet = (value) => {
   const declaredVersion = Number(value.statsSchemaVersion);
   out.statsSchemaVersion = Number.isInteger(declaredVersion) && declaredVersion > 0
     ? declaredVersion
-    : components.length
+    : components.length || territorialScope === "nonterritorial"
       ? COUNTRY_STATS_SCHEMA_VERSION
       : 0;
 
@@ -428,12 +437,16 @@ export const finalizeCountryStatSheet = (value) => {
   const breakdown = normalizeBreakdown(value.gdpBreakdown);
   if (breakdown) out.gdpBreakdown = breakdown;
 
+  const territorialScope = clean(value.territorialScope).toLowerCase();
+  if (TERRITORIAL_SCOPE_SET.has(territorialScope)) out.territorialScope = territorialScope;
+
   const economy = normalizeEconomy(value.economy) || {};
+  const hasExplicitComponents = Array.isArray(value.territorialComponents);
   const components = normalizeTerritorialComponents(value.territorialComponents);
   const aggregate = aggregateTerritorialEconomy(components);
   const continuity = normalizeCountryStatContinuity(value.continuity);
 
-  if (components.length) out.territorialComponents = components;
+  if (components.length || hasExplicitComponents) out.territorialComponents = components;
   if (continuity) out.continuity = continuity;
 
   if (aggregate) {
@@ -460,7 +473,11 @@ export const finalizeCountryStatSheet = (value) => {
     if (population) out.population = population;
     if (Object.keys(economy).length) out.economy = economy;
     const declaredVersion = Number(value.statsSchemaVersion);
-    out.statsSchemaVersion = Number.isInteger(declaredVersion) && declaredVersion > 0 ? declaredVersion : 0;
+    out.statsSchemaVersion = Number.isInteger(declaredVersion) && declaredVersion > 0
+      ? declaredVersion
+      : territorialScope === "nonterritorial"
+        ? COUNTRY_STATS_SCHEMA_VERSION
+        : 0;
   }
 
   return out;
@@ -797,11 +814,26 @@ export const mergeCountryStatPatch = (
     ...economyPatch,
   };
 
+  // Preserve the explicit territorial accounting contract through the single
+  // mutation boundary. This matters for valid landless/non-territorial actors:
+  // `territorialComponents: []` is meaningful canonical state, not the same as
+  // an omitted/unknown ledger. A mapped polity can still fail closed later if
+  // its explicit replacement ledger is empty.
+  const patchTerritorialScope = clean(patch.territorialScope).toLowerCase();
+  if (TERRITORIAL_SCOPE_SET.has(patchTerritorialScope)) {
+    merged.territorialScope = patchTerritorialScope;
+  }
+
+  const baseHasExplicitComponents = Array.isArray(base.territorialComponents);
+  const patchHasExplicitComponents = Array.isArray(patch.territorialComponents);
+  let preserveExplicitComponentLedger = baseHasExplicitComponents;
+
   let components = normalizeTerritorialComponents(base.territorialComponents);
-  if (Array.isArray(patch.territorialComponents)) {
+  if (patchHasExplicitComponents) {
     components = replaceComponents
       ? normalizeTerritorialComponents(patch.territorialComponents)
       : mergeComponentsByGeography(components, patch.territorialComponents);
+    if (replaceComponents) preserveExplicitComponentLedger = true;
   }
 
   // Aggregate population edits are supported for GM/editor convenience. The
@@ -869,7 +901,9 @@ export const mergeCountryStatPatch = (
     }
   }
 
-  if (components.length) merged.territorialComponents = components;
+  if (components.length || preserveExplicitComponentLedger) {
+    merged.territorialComponents = components;
+  }
 
   return finalizeCountryStatSheet(merged);
 };
@@ -1055,9 +1089,11 @@ export const isCompleteCountryStatSheet = (value) => {
   if (!["capital", "continent", "government", "leader"].every((key) => clean(sheet[key]))) return false;
   if (!Number.isFinite(Number(sheet.stability))) return false;
   if (!INDEX_KEYS.every((key) => Number.isFinite(Number(sheet.indices?.[key])))) return false;
-  if (!Array.isArray(sheet.territorialComponents) || sheet.territorialComponents.length < 1) return false;
-  if (!(Number(sheet.population?.total) > 0)) return false;
-  if (!(Number(sheet.economy?.gdp) > 0) || !(Number(sheet.economy?.gdpPerCapita) > 0)) return false;
+  if (!Array.isArray(sheet.territorialComponents)) return false;
+  const nonterritorial = sheet.territorialScope === "nonterritorial";
+  if (!nonterritorial && sheet.territorialComponents.length < 1) return false;
+  if (!nonterritorial && !(Number(sheet.population?.total) > 0)) return false;
+  if (!nonterritorial && (!(Number(sheet.economy?.gdp) > 0) || !(Number(sheet.economy?.gdpPerCapita) > 0))) return false;
   if (!["gdpGrowth", "inflation", "unemployment", "publicDebt", "budgetBalance"].every(
     (key) => Number.isFinite(Number(sheet.economy?.[key])),
   )) return false;
