@@ -918,10 +918,11 @@ const decodeCountryStatMacroEstimates = (value, macroPlan = []) => {
     return { estimates: nativePlan.map((entry) => estimates.get(entry.index)), error: "" };
   }
 
-  // Compatibility fallback for landless/custom scenarios with no native map basis.
-  // In that rare path, accept the old group~geography~population~gdpPerCapita rows
-  // and return them as ready-made components rather than inventing macro geography.
-  if (!text) return { estimates: [], components: [], error: "" };
+  // Compatibility fallback for a valid non-territorial polity with no native map
+  // basis. Campaign-supported distributed people/organizations may still provide old
+  // group~geography~population~gdpPerCapita rows. NONE explicitly means there is no
+  // defensible quantitative population/GDP scope; that is valid and must not invent land.
+  if (!text || text.toLowerCase() === "none") return { estimates: [], components: [], error: "" };
   const components = [];
   for (const rawLine of text.split(/\r?\n/)) {
     const parts = rawLine.trim().split("~").map((part) => part.trim());
@@ -1769,7 +1770,7 @@ BOUNDED REGIONAL METHOD — REQUIRED:
 - Return territorialMacroComponentsText with EXACTLY ONE row for EVERY [M#] macro bucket, in this exact transport format: index~group~population~gdpPerCapita
 - Example rows: 1~core~32000000~4200 OR 2~overseas/dependent~4200000~900
 - index MUST be the supplied macro integer. Do not return province-by-province rows. Do not add, omit, split, or merge macro buckets.
-- Compatibility only: if the authoritative basis explicitly says no mapped macro buckets exist, territorialMacroComponentsText may instead use group~geography~population~gdpPerCapita rows for the genuinely supported landless/custom scope.
+- NON-TERRITORIAL COMPATIBILITY: if the authoritative basis explicitly says NON-TERRITORIAL and no mapped macro buckets exist, territorialMacroComponentsText may use group~geography~population~gdpPerCapita rows ONLY for a genuinely campaign-supported distributed people, organization, workforce, exile community, or other non-map economic/demographic scope. If no defensible quantitative scope exists, return exactly NONE. Never invent a fake province, population, or GDP merely to satisfy the schema.
 - Allowed group values: core | integrated | overseas/dependent.
 - Estimate each macro bucket from its representative places, spatial center, scenario canon, and any prior macro baseline. Prefer checkable regional magnitudes over a single historical whole-country headline total.
 - Do NOT force the macro-bucket sum to a remembered country/empire headline. A historical headline is usable only as a cross-check when its territorial definition exactly matches the live macro scope; otherwise the regional estimates win.
@@ -2115,12 +2116,16 @@ This live instruction supersedes older frozen country-stat prompts and all earli
           territorialComponentsText: _territorialComponentsText,
           ...statFields
         } = parsed;
+        const plannedComponentCount = normalizeArray(variables?.statsTerritorialPlan).length;
+        const territorialScope = normalizeString(variables?.statsTerritorialBasisMode) === "nonterritorial"
+          ? "nonterritorial"
+          : "mapped";
         parsed = finalizeCountryStatSheet({
           ...statFields,
+          territorialScope,
           territorialComponents: components,
         });
 
-        const plannedComponentCount = normalizeArray(variables?.statsTerritorialPlan).length;
         const finalizedComponentCount = normalizeArray(parsed?.territorialComponents).length;
         if (!statsCoverageError && plannedComponentCount > 0 && finalizedComponentCount !== plannedComponentCount) {
           statsCoverageError =
@@ -8098,15 +8103,16 @@ const buildTargetStatsTerritorialBasis = async (bundle, code, normalizedWorld = 
     return {
       context: [
         `Target: ${target}`,
-        "Accounting mode: LEGAL SOVEREIGNTY",
-        "No legally sovereign map regions were resolved for this polity.",
+        "Accounting mode: NON-TERRITORIAL",
+        "No legally sovereign national map regions were resolved for this polity.",
         controlledRegionCount > 0
           ? `The polity controls ${controlledRegionCount} region(s), but native statehood safeguards did NOT classify those holdings as a de-facto national administrative basis. Ordinary occupation therefore remains excluded from national population/GDP.`
           : "No de-facto controlled mapped regions were resolved either.",
-        "Do not silently substitute modern borders. If this is a landless polity, estimate only what the campaign canon actually supports.",
+        "Do not silently substitute modern borders. This is an explicit NON-TERRITORIAL Stats basis: estimate a distributed/non-map population or economy only when campaign canon supports one; otherwise return no quantitative scope.",
       ].join("\n"),
       plan: [],
-      mode,
+      macroPlan: [],
+      mode: "nonterritorial",
       referenceContext: "",
     };
   }
@@ -8714,7 +8720,9 @@ export const generateCountryStatSheet = async ({ code, name, forceReassess = fal
   // migration. Fresh baselines and explicit hard audits get an auditable nominal
   // anchor; established campaign ledgers remain canon and are never silently pulled
   // back toward real history merely because this feature was added later.
-  const economicCalibrationRequested = Boolean(!previousComplete || forceReassess);
+  const economicCalibrationRequested = Boolean(
+    territorialBasisMode !== "nonterritorial" && (!previousComplete || forceReassess)
+  );
 
   // Legacy 7A.1 sheets can be complete while carrying no continuity fingerprint.
   // On a mapped polity we MUST NOT stamp today's border fingerprint onto that old
