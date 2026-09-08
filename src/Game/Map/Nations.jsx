@@ -229,10 +229,14 @@ const normalizePoliticalRgb = (rgb) => {
 
   const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
   const chroma = Math.max(r, g, b) - Math.min(r, g, b);
-  const desaturate = chroma > 20 ? 0.08 : 0.03;
-  r = r * (1 - desaturate) + luminance * desaturate;
-  g = g * (1 - desaturate) + luminance * desaturate;
-  b = b * (1 - desaturate) + luminance * desaturate;
+  // Release-map pass: preserve authored identity but give ordinary polity fills
+  // enough chroma to survive the translucent physical basemap. The previous
+  // atlas normalizer always pulled colors toward grey, which combined with the
+  // low regional fill opacity to make neighboring countries look washed out.
+  const saturationBoost = chroma < 18 ? 0.05 : chroma < 150 ? 0.18 : 0.09;
+  r = luminance + (r - luminance) * (1 + saturationBoost);
+  g = luminance + (g - luminance) * (1 + saturationBoost);
+  b = luminance + (b - luminance) * (1 + saturationBoost);
 
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
@@ -362,21 +366,24 @@ const STOCK_GEOMETRY_FILTER = ["all", GADM_GEOMETRY_FILTER, ["!=", ["get", "edit
 // player zooms toward province/city detail.
 const PAX_POLITICAL_FILL_OPACITY = [
   "interpolate", ["linear"], ["zoom"],
-  1.5, 0.40,
-  2.5, 0.43,
-  3.75, 0.47,
-  // R20: aggressively open the regional terrain window. This deliberately
-  // halves the R19 political tint through the Poland/Europe zoom band so the
-  // physical basemap can dominate while borders and labels keep polity identity.
-  5.0, 0.205,
-  6.5, 0.22,
-  8.0, 0.25,
-  // Rejoin the established deep-local ramp by z10 so very close play remains
-  // strongly political and province/city interaction stays visually grounded.
-  10.0, 0.565,
-  12.0, 0.575,
-  14.0, 0.585,
+
+  // World view: terrain remains visible while political ownership is readable.
+  1.5, 0.46,
+  2.5, 0.50,
+  3.75, 0.56,
+
+  // Regional view: political colours become the primary map layer.
+  // This avoids countries fading into the physical basemap during normal play.
+  5.0, 0.62,
+  6.5, 0.68,
+  8.0, 0.72,
+
+  // Close play: maintain strong polity identity while showing terrain detail.
+  10.0, 0.78,
+  12.0, 0.82,
+  14.0, 0.84,
 ];
+const DISPUTED_STRIPE_OPACITY = 0.22;
 const TILE_FILL_FADE = ["interpolate", ["linear"], ["zoom"], 5.5, 0, 6.5, 1];
 
 // GADM assigns disputed / undetermined boundary areas the codes Z01-Z09 (the
@@ -415,6 +422,7 @@ const WorldMap = ({ isGlobe = false }) => {
   } = useWorldState();
   const mapDisplaySettings = {
     hideCountryLabels: useMapSetting(MAP_SETTING_KEYS.hideCountryLabels),
+    disableCurvedCountryLabels: useMapSetting(MAP_SETTING_KEYS.disableCurvedCountryLabels),
   };
   // A player's own choice from Settings > Map. Empty means "whatever the
   // scenario author set", so it changes nothing until it is filled in.
@@ -545,7 +553,7 @@ const WorldMap = ({ isGlobe = false }) => {
   // time renderer scan.
   useEffect(() => {
     const mapInstance = map?.getMap ? map.getMap() : map;
-    if (!customFlag || !useLivePolityLabels || !mapInstance?.on) {
+    if (!customFlag || !useLivePolityLabels || mapDisplaySettings.disableCurvedCountryLabels || !mapInstance?.on) {
       setRenderConfirmedCurveOwners((current) => (current.length ? [] : current));
       return undefined;
     }
@@ -602,7 +610,7 @@ const WorldMap = ({ isGlobe = false }) => {
       mapInstance.off("movestart", clearRenderConfirmation);
       mapInstance.off("idle", confirmRenderedCurves);
     };
-  }, [customFlag, map, useLivePolityLabels]);
+  }, [customFlag, map, mapDisplaySettings.disableCurvedCountryLabels, useLivePolityLabels]);
 
   // Development-time proof instead of screenshot guesswork. One authoritative
   // record per polity is exposed for inspection and the known regression set is
@@ -698,7 +706,7 @@ const WorldMap = ({ isGlobe = false }) => {
   const rawLivePolityPointLabelData = worldKnown && customFlag && useLivePolityLabels
     ? polityLabelCollections.pointLabelData
     : EMPTY_FEATURE_COLLECTION;
-  const rawLivePolityLineLabelData = worldKnown && customFlag && useLivePolityLabels
+  const rawLivePolityLineLabelData = worldKnown && customFlag && useLivePolityLabels && !mapDisplaySettings.disableCurvedCountryLabels
     ? polityLabelCollections.lineLabelData
     : EMPTY_FEATURE_COLLECTION;
   const currentLabelZoom = Number(labelZoom ?? 3.5);
@@ -708,8 +716,8 @@ const WorldMap = ({ isGlobe = false }) => {
   // guaranteed overlap layer until an idle-time renderer check confirms that
   // MapLibre actually drew the curve for that owner.
   const renderedCurveOwnersLiteral = useMemo(
-    () => ["literal", renderConfirmedCurveOwners],
-    [renderConfirmedCurveOwners],
+    () => ["literal", mapDisplaySettings.disableCurvedCountryLabels ? [] : renderConfirmedCurveOwners],
+    [mapDisplaySettings.disableCurvedCountryLabels, renderConfirmedCurveOwners],
   );
 
   const livePointManagedFilter = useMemo(() => [
@@ -772,7 +780,7 @@ const WorldMap = ({ isGlobe = false }) => {
 
   // Stock curved-label data remains separate. R5.4.6 renderer confirmation
   // applies only to the two live custom-polity curve layers above.
-  const activeCurvedLabelData = worldKnown && !customFlag
+  const activeCurvedLabelData = worldKnown && !customFlag && !mapDisplaySettings.disableCurvedCountryLabels
     ? curvedLabelData
     : EMPTY_FEATURE_COLLECTION;
   const handleRegionClick = useCallback(async (event) => {
@@ -1632,8 +1640,8 @@ const WorldMap = ({ isGlobe = false }) => {
     // survives both pale and saturated polity fills like the Pax reference.
     "text-color": labelTextColor || "rgba(250, 249, 244, 0.995)",
     "text-halo-color": labelHaloColor || "rgba(4, 6, 9, 0.96)",
-    "text-halo-width": 1.45,
-    "text-halo-blur": 0.18,
+    "text-halo-width": 1.62,
+    "text-halo-blur": 0.20,
     // The live line and point layers both size 1 × fitScale.
     "text-opacity": buildCountryTextOpacity(LIVE_LABEL_RAMP, 1, isGlobe, "fitScale"),
   }), [isGlobe, labelHaloColor, labelTextColor]);
@@ -1702,6 +1710,7 @@ const WorldMap = ({ isGlobe = false }) => {
             id="regions-disputed"
             type="fill"
             source-layer="regions"
+            beforeId={map?.getLayer?.("regions-outline") ? "regions-outline" : undefined}
             filter={editedStockIds.length
               ? ["all",
                 ["in", ["get", "GID_1"], ["literal", disputedTileStops.filter((_, i) => i % 2 === 0)]],
@@ -1709,7 +1718,7 @@ const WorldMap = ({ isGlobe = false }) => {
               : ["in", ["get", "GID_1"], ["literal", disputedTileStops.filter((_, i) => i % 2 === 0)]]}
             paint={{
               "fill-pattern": ["match", ["get", "GID_1"], ...disputedTileStops, disputedTileStops[1]],
-              "fill-opacity": customActive && worldKnown ? TILE_FILL_FADE : 0,
+              "fill-opacity": customActive && worldKnown ? ["*", TILE_FILL_FADE, DISPUTED_STRIPE_OPACITY] : 0,
             }}
           />
         )}
@@ -1781,10 +1790,11 @@ const WorldMap = ({ isGlobe = false }) => {
           <Layer
             id="custom-regions-disputed-vnext"
             type="fill"
+            beforeId={map?.getLayer?.("polity-boundaries-shadow") ? "polity-boundaries-shadow" : undefined}
             filter={["has", "_stripes"]}
             paint={{
               "fill-pattern": ["get", "_stripes"],
-              "fill-opacity": customActive && worldKnown ? 0.90 : 0,
+              "fill-opacity": customActive && worldKnown ? DISPUTED_STRIPE_OPACITY : 0,
             }}
           />
         </Source>
@@ -1859,7 +1869,7 @@ const WorldMap = ({ isGlobe = false }) => {
             filter={liveWorldLineFilter}
             layout={{
               ...liveLineLabelLayerLayout,
-              "text-max-angle": 28,
+              "text-max-angle": 38,
               "text-allow-overlap": true,
             }}
             paint={integratedLabelLayerPaint}
